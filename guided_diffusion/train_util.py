@@ -32,10 +32,14 @@ def dice_score(pred: th.Tensor, target: th.Tensor, threshold: float = 0.0) -> th
 
 INITIAL_LOG_LOSS_SCALE = 20.0
 
-def visualize(img):
+def visualize(img: th.Tensor) -> th.Tensor:
+    """Normalize a tensor image to the range [0, 1]."""
     _min = img.min()
     _max = img.max()
-    normalized_img = (img - _min)/ (_max - _min)
+    if _max == _min:
+        # avoid division by zero which leads to NaNs in TensorBoard
+        return th.zeros_like(img)
+    normalized_img = (img - _min) / (_max - _min)
     return normalized_img
 
 class TrainLoop:
@@ -295,7 +299,8 @@ class TrainLoop:
         )
 
         weights = th.ones(len(loss_dict["mse_wav"])).to(sample_idwt.device)
-        val_loss = (loss_dict["mse_wav"] * weights).mean().item()
+        val_loss = (loss_dict["mse_wav"] * weights).mean()
+        val_loss = th.clamp(val_loss, min=0).item()
 
         pred_region = sample_idwt * mask
         gt_region = gt * mask
@@ -391,7 +396,10 @@ class TrainLoop:
 
             weights = th.ones(len(losses["mse_wav"])).cuda()  # Equally weight all wavelet channel losses
 
+            # Clamp per-channel losses to avoid negative values from numeric errors
+            losses["mse_wav"] = th.clamp(losses["mse_wav"], min=0)
             loss = (losses["mse_wav"] * weights).mean()
+            loss = th.clamp(loss, min=0)
             lossmse = loss.detach()
 
             log_loss_dict(self.diffusion, t, {k: v * weights for k, v in losses.items()})
