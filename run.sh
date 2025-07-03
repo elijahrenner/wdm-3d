@@ -66,6 +66,7 @@ elif [[ $MODE == 'train' ]]; then
     echo "DATASET: INPAINT";
     DATA_DIR=~/wdm-3d/data/INPAINT/;
     IN_CHANNELS=16;
+    OUT_CHANNELS=8;
   else
     echo "DATASET NOT FOUND -> Check the supported datasets again";
   fi
@@ -89,7 +90,7 @@ COMMON="
 --batch_size=${BATCH_SIZE}
 --num_groups=32
 --in_channels=${IN_CHANNELS}
---out_channels=${IN_CHANNELS}
+--out_channels=${OUT_CHANNELS:-$IN_CHANNELS}
 --bottleneck_attention=False
 --resample_2d=False
 --renormalize=True
