@@ -15,6 +15,7 @@ from guided_diffusion import (dist_util,
                               logger)
 from guided_diffusion.bratsloader import BRATSVolumes
 from guided_diffusion.lidcloader import LIDCVolumes
+from guided_diffusion.inpaintloader import InpaintVolumes
 from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (model_and_diffusion_defaults,
                                           create_model_and_diffusion,
@@ -64,13 +65,24 @@ def main():
 
     elif args.dataset == 'lidc-idri':
         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
-        ds = LIDCVolumes(args.data_dir, test_flag=False,
-                         normalize=(lambda x: 2*x - 1) if args.renormalize else None,
-                         mode='train',
-                         img_size=args.image_size)
+        ds = LIDCVolumes(
+            args.data_dir,
+            test_flag=False,
+            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
+            mode='train',
+            img_size=args.image_size,
+        )
+
+    elif args.dataset == 'inpaint':
+        ds = InpaintVolumes(
+            args.data_dir,
+            subset='train',
+            img_size=args.image_size,
+            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
+        )
 
     else:
-        print("We currently just support the datasets: brats, lidc-idri")
+        print("We currently just support the datasets: brats, lidc-idri, inpaint")
 
     datal = th.utils.data.DataLoader(ds,
                                      batch_size=args.batch_size,
@@ -100,7 +112,7 @@ def main():
         lr_anneal_steps=args.lr_anneal_steps,
         dataset=args.dataset,
         summary_writer=summary_writer,
-        mode='default',
+        mode='inpaint' if args.dataset == 'inpaint' else 'default',
     ).run_loop()
 
 
