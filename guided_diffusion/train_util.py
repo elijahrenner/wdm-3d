@@ -140,7 +140,7 @@ class TrainLoop:
         while not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps:
             t_total = time.time() - t
             t = time.time()
-            if self.dataset in ['brats', 'lidc-idri']:
+            if self.dataset in ['brats', 'lidc-idri', 'inpaint']:
                 try:
                     batch = next(self.iterdatal)
                     cond = {}
@@ -149,7 +149,11 @@ class TrainLoop:
                     batch = next(self.iterdatal)
                     cond = {}
 
-            batch = batch.to(dist_util.dev())
+            if self.dataset == 'inpaint':
+                # Inpainting loader returns tuple
+                batch = tuple(b.to(dist_util.dev()) if th.is_tensor(b) else b for b in batch)
+            else:
+                batch = batch.to(dist_util.dev())
 
             t_fwd = time.time()
             t_load = t_fwd-t
@@ -228,17 +232,26 @@ class TrainLoop:
         for p in self.model.parameters():  # Zero out gradient
             p.grad = None
 
-        for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i: i + self.microbatch].to(dist_util.dev())
+        for i in range(0, batch[0].shape[0] if self.dataset == 'inpaint' else batch.shape[0], self.microbatch):
+            if self.dataset == 'inpaint':
+                micro = batch[0][i: i + self.microbatch]
+                micro_mask = batch[1][i: i + self.microbatch]
+                micro_cond = {"mask": micro_mask}
+            else:
+                micro = batch[i: i + self.microbatch]
+                micro_cond = None
+            micro = micro.to(dist_util.dev())
+            if self.dataset == 'inpaint':
+                micro_cond = {k: v.to(dist_util.dev()) for k, v in micro_cond.items()}
 
             if label is not None:
                 micro_label = label[i: i + self.microbatch].to(dist_util.dev())
             else:
                 micro_label = None
 
-            micro_cond = None
-
-            last_batch = (i + self.microbatch) >= batch.shape[0]
+            last_batch = (
+                i + self.microbatch
+            ) >= (batch[0].shape[0] if self.dataset == 'inpaint' else batch.shape[0])
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
 
             compute_losses = functools.partial(self.diffusion.training_losses,
@@ -315,6 +328,8 @@ class TrainLoop:
                     filename = f"brats_{(self.step+self.resume_step):06d}.pt"
                 elif self.dataset == 'lidc-idri':
                     filename = f"lidc-idri_{(self.step+self.resume_step):06d}.pt"
+                elif self.dataset == 'inpaint':
+                    filename = f"inpaint_{(self.step+self.resume_step):06d}.pt"
                 else:
                     raise ValueError(f'dataset {self.dataset} not implemented')
 

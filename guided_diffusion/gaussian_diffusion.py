@@ -654,11 +654,14 @@ class GaussianDiffusion:
         if device is None:
             device = next(model.parameters()).device
         assert isinstance(shape, (tuple, list))
+        use_inpaint = model_kwargs is not None and 'context' in model_kwargs and 'mask' in model_kwargs
         if noise is not None:
             img = noise
         else:
             img = th.randn(*shape, device=device)
-      
+        if use_inpaint:
+            img = model_kwargs['context'] + img * model_kwargs['mask']
+
         indices = list(range(time))[::-1]
         if progress:
             # Lazy import so that we don't depend on tqdm.
@@ -668,17 +671,25 @@ class GaussianDiffusion:
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():
+                cur = img
+                if use_inpaint:
+                    cur = model_kwargs['context'] + img * model_kwargs['mask']
+                    model_input = th.cat([cur, model_kwargs['mask']], dim=1)
+                else:
+                    model_input = cur
                 out = self.p_sample(
                     model,
-                    img,
+                    model_input,
                     t,
                     clip_denoised=clip_denoised,
                     denoised_fn=denoised_fn,
                     cond_fn=cond_fn,
-                    model_kwargs=model_kwargs,
+                    model_kwargs=None,
                 )
-                yield out
                 img = out["sample"]
+                if use_inpaint:
+                    img = model_kwargs['context'] + img * model_kwargs['mask']
+                yield {"sample": img}
 
     def ddim_sample(
             self,
@@ -1066,15 +1077,36 @@ class GaussianDiffusion:
         x_start_dwt = th.cat([LLL / 3., LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)
 
         if mode == 'default':
-            noise = th.randn_like(x_start)  # Sample noise - original image resolution.
+            noise = th.randn_like(x_start)
             LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH = dwt(noise)
-            noise_dwt = th.cat([LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)  # Wavelet transformed noise
-            x_t = self.q_sample(x_start_dwt, t, noise=noise_dwt)  # Sample x_t
+            noise_dwt = th.cat([LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)
+            x_t = self.q_sample(x_start_dwt, t, noise=noise_dwt)
 
+        elif mode == 'inpaint':
+            mask = model_kwargs.get('mask')
+            if mask is None:
+                raise ValueError('mask must be provided for inpaint mode')
+            # remove mask so it is not forwarded to the model
+            model_kwargs = {k: v for k, v in model_kwargs.items() if k != 'mask'}
+
+            LLLm, LLHm, LHLm, LHHm, HLLm, HLHm, HHLm, HHHm = dwt(mask)
+            mask_dwt = th.cat([LLLm, LLHm, LHLm, LHHm, HLLm, HLHm, HHLm, HHHm], dim=1)
+            mask_rep = mask_dwt.repeat(1, x_start.shape[1], 1, 1, 1)
+
+            noise = th.randn_like(x_start)
+            LLLn, LLHn, LHLn, LHHn, HLLn, HLHn, HHLn, HHHn = dwt(noise)
+            noise_dwt = th.cat([LLLn, LLHn, LHLn, LHHn, HLLn, HLHn, HHLn, HHHn], dim=1)
+            x_t_noisy = self.q_sample(x_start_dwt, t, noise=noise_dwt)
+            x_ctx = x_start_dwt * (1 - mask_rep)
+            x_t = x_ctx + x_t_noisy * mask_rep
         else:
-            raise ValueError(f'Invalid mode {mode=}, needs to be "default"')
+            raise ValueError(f'Invalid mode {mode=}, needs to be "default" or "inpaint"')
 
-        model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)  # Model outputs denoised wavelet subbands
+        if mode == 'inpaint':
+            model_in = th.cat([x_t, mask_rep], dim=1)
+        else:
+            model_in = x_t
+        model_output = model(model_in, self._scale_timesteps(t), **model_kwargs)  # Model outputs denoised wavelet subbands
 
         # Inverse wavelet transform the model output
         B, _, H, W, D = model_output.size()
@@ -1087,7 +1119,12 @@ class GaussianDiffusion:
                                  model_output[:, 6, :, :, :].view(B, 1, H, W, D),
                                  model_output[:, 7, :, :, :].view(B, 1, H, W, D))
 
-        terms = {"mse_wav": th.mean(mean_flat((x_start_dwt - model_output) ** 2), dim=0)}
+        if mode == 'inpaint':
+            diff = (x_start_dwt - model_output) * mask_rep
+            mse = mean_flat(diff ** 2) / (mean_flat(mask_rep) + 1e-8)
+            terms = {"mse_wav": th.mean(mse, dim=0)}
+        else:
+            terms = {"mse_wav": th.mean(mean_flat((x_start_dwt - model_output) ** 2), dim=0)}
 
         return terms, model_output, model_output_idwt
 

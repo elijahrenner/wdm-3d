@@ -20,7 +20,8 @@ from guided_diffusion.script_util import (model_and_diffusion_defaults,
                                           add_dict_to_argparser,
                                           args_to_dict,
                                           )
-from DWT_IDWT.DWT_IDWT_layer import IDWT_3D
+from guided_diffusion.inpaintloader import InpaintVolumes
+from DWT_IDWT.DWT_IDWT_layer import IDWT_3D, DWT_3D
 
 
 def visualize(img):
@@ -54,6 +55,14 @@ def main():
 
     model.eval()
     idwt = IDWT_3D("haar")
+    dwt = DWT_3D("haar")
+
+    if args.dataset == 'inpaint':
+        ds = InpaintVolumes(args.data_dir, subset='val', img_size=args.image_size)
+        loader = th.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False)
+        data_iter = iter(loader)
+    else:
+        loader = None
 
     for ind in range(args.num_samples // args.batch_size):
         th.manual_seed(seed)
@@ -63,23 +72,43 @@ def main():
 
         seed += 1
 
-        img = th.randn(args.batch_size,         # Batch size
-                       8,                       # 8 wavelet coefficients
-                       args.image_size//2,      # Half spatial resolution (D)
-                       args.image_size//2,      # Half spatial resolution (H)
-                       args.image_size//2,      # Half spatial resolution (W)
-                       ).to(dist_util.dev())
-
-        model_kwargs = {}
-
-        sample_fn = diffusion.p_sample_loop
-
-        sample = sample_fn(model=model,
-                           shape=img.shape,
-                           noise=img,
-                           clip_denoised=args.clip_denoised,
-                           model_kwargs=model_kwargs,
-                           )
+        if args.dataset == 'inpaint':
+            try:
+                Y, M, Y_void, name, affine = next(data_iter)
+            except StopIteration:
+                data_iter = iter(loader)
+                Y, M, Y_void, name, affine = next(data_iter)
+            Y = Y.to(dist_util.dev())
+            M = M.to(dist_util.dev())
+            Y_void = Y_void.to(dist_util.dev())
+            # Wavelet domain context and mask
+            ctx = th.cat(dwt(Y_void), dim=1)
+            mask_dwt = th.cat(dwt(M), dim=1)
+            mask_rep = mask_dwt.repeat(1, Y.shape[1], 1, 1, 1)
+            noise = th.randn_like(ctx)
+            sample = diffusion.p_sample_loop(
+                model,
+                shape=ctx.shape,
+                noise=noise,
+                clip_denoised=args.clip_denoised,
+                model_kwargs={'context': ctx, 'mask': mask_rep},
+            )
+        else:
+            img = th.randn(
+                args.batch_size,
+                8,
+                args.image_size // 2,
+                args.image_size // 2,
+                args.image_size // 2,
+                device=dist_util.dev(),
+            )
+            sample = diffusion.p_sample_loop(
+                model=model,
+                shape=img.shape,
+                noise=img,
+                clip_denoised=args.clip_denoised,
+                model_kwargs={},
+            )
 
         B, _, D, H, W = sample.size()
 
@@ -100,8 +129,13 @@ def main():
 
         pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
         for i in range(sample.shape[0]):
-            output_name = os.path.join(args.output_dir, f'sample_{ind}_{i}.nii.gz')
-            img = nib.Nifti1Image(sample.detach().cpu().numpy()[i, :, :, :], np.eye(4))
+            if args.dataset == 'inpaint':
+                output_name = os.path.join(args.output_dir, f"{name[i]}_inpaint.nii.gz")
+                aff = affine[i] if isinstance(affine[i], np.ndarray) else affine[i].numpy()
+            else:
+                output_name = os.path.join(args.output_dir, f'sample_{ind}_{i}.nii.gz')
+                aff = np.eye(4)
+            img = nib.Nifti1Image(sample.detach().cpu().numpy()[i, :, :, :], aff)
             nib.save(img=img, filename=output_name)
             print(f'Saved to {output_name}')
 

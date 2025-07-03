@@ -3,7 +3,8 @@ GPU=0;                    # gpu to use
 SEED=42;                  # randomness seed for sampling
 CHANNELS=64;              # number of model base channels (we use 64 for all experiments)
 MODE='train';             # train vs sample
-DATASET='brats';          # brats or lidc-idri
+DATASET='brats';          # brats, lidc-idri or inpaint
+IN_CHANNELS=8;
 MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
 
 # settings for sampling/inference
@@ -59,6 +60,12 @@ elif [[ $MODE == 'train' ]]; then
     echo "MODE: training";
     echo "Dataset: LIDC-IDRI";
     DATA_DIR=~/wdm-3d/data/LIDC-IDRI/;
+    IN_CHANNELS=8;
+  elif [[ $DATASET == 'inpaint' ]]; then
+    echo "MODE: training";
+    echo "DATASET: INPAINT";
+    DATA_DIR=~/wdm-3d/data/INPAINT/;
+    IN_CHANNELS=16;
   else
     echo "DATASET NOT FOUND -> Check the supported datasets again";
   fi
@@ -81,8 +88,8 @@ COMMON="
 --dims=3
 --batch_size=${BATCH_SIZE}
 --num_groups=32
---in_channels=8
---out_channels=8
+--in_channels=${IN_CHANNELS}
+--out_channels=${IN_CHANNELS}
 --bottleneck_attention=False
 --resample_2d=False
 --renormalize=True
