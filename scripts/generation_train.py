@@ -22,6 +22,7 @@ from guided_diffusion.script_util import (model_and_diffusion_defaults,
                                           args_to_dict,
                                           add_dict_to_argparser)
 from guided_diffusion.train_util import TrainLoop
+from guided_diffusion.pretrain_checks import run_pretrain_checks
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -104,6 +105,11 @@ def main():
                                      shuffle=True,
                                      )
 
+    if args.run_tests:
+        logger.log("Running pre-training checks...")
+        run_pretrain_checks(args, datal, model, diffusion, schedule_sampler)
+        return
+
     logger.log("Start training...")
     TrainLoop(
         model=model,
@@ -166,6 +172,7 @@ def create_argparser():
         additive_skips=False,
         use_freq=False,
         val_interval=1000,
+        run_tests=False,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
