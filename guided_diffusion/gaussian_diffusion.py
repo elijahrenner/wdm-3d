@@ -1124,7 +1124,14 @@ class GaussianDiffusion:
             mse = mean_flat(diff ** 2) / (mean_flat(mask_rep) + 1e-8)
             terms = {"mse_wav": th.mean(mse, dim=0)}
         else:
-            terms = {"mse_wav": th.mean(mean_flat((x_start_dwt - model_output) ** 2), dim=0)}
+            terms = {
+                "mse_wav": th.mean(
+                    mean_flat((x_start_dwt - model_output) ** 2), dim=0
+                )
+            }
+
+        # Numerical errors could yield tiny negative values.
+        terms["mse_wav"] = th.clamp(terms["mse_wav"], min=0)
 
         return terms, model_output, model_output_idwt
 
