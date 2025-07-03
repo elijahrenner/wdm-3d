@@ -15,6 +15,21 @@ from . import dist_util, logger
 from .resample import LossAwareSampler, UniformSampler
 from DWT_IDWT.DWT_IDWT_layer import DWT_3D, IDWT_3D
 
+
+def psnr(pred: th.Tensor, target: th.Tensor, data_range: float = 2.0) -> th.Tensor:
+    """Compute the peak signal to noise ratio."""
+    mse = th.mean((pred - target) ** 2)
+    mse = th.clamp(mse, min=1e-8)
+    return 20 * th.log10(th.tensor(data_range, device=pred.device)) - 10 * th.log10(mse)
+
+
+def dice_score(pred: th.Tensor, target: th.Tensor, threshold: float = 0.0) -> th.Tensor:
+    """Dice score for binary volumes."""
+    pred_bin = (pred > threshold).float()
+    target_bin = (target > threshold).float()
+    inter = (pred_bin * target_bin).sum()
+    return 2 * inter / (pred_bin.sum() + target_bin.sum() + 1e-8)
+
 INITIAL_LOG_LOSS_SCALE = 20.0
 
 def visualize(img):
@@ -46,6 +61,8 @@ class TrainLoop:
         weight_decay=0.0,
         lr_anneal_steps=0,
         dataset='brats',
+        val_data=None,
+        val_interval=0,
         summary_writer=None,
         mode='default',
         loss_level='image',
@@ -57,6 +74,9 @@ class TrainLoop:
         self.datal = data
         self.dataset = dataset
         self.iterdatal = iter(data)
+        self.val_data = val_data
+        self.iterval = iter(val_data) if val_data is not None else None
+        self.val_interval = val_interval
         self.batch_size = batch_size
         self.in_channels = in_channels
         self.image_size = image_size
@@ -190,6 +210,13 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
+
+            if (
+                self.val_data is not None
+                and self.val_interval > 0
+                and self.step % self.val_interval == 0
+            ):
+                self._run_validation()
             self.step += 1
 
         # Save the last checkpoint if it wasn't already saved.
@@ -227,6 +254,72 @@ class TrainLoop:
         self._anneal_lr()
         self.log_step()
         return lossmse, sample, sample_idwt
+
+    @th.no_grad()
+    def _run_validation(self):
+        """Run a single validation pass."""
+        if self.val_data is None:
+            return
+
+        self.model.eval()
+        try:
+            batch = next(self.iterval)
+        except StopIteration:
+            self.iterval = iter(self.val_data)
+            batch = next(self.iterval)
+
+        if self.dataset == 'inpaint':
+            batch = tuple(b.to(dist_util.dev()) if th.is_tensor(b) else b for b in batch)
+            cond = {"mask": batch[1]}
+            gt = batch[0]
+            mask = batch[1]
+        else:
+            batch = batch.to(dist_util.dev())
+            cond = {}
+            gt = batch
+            mask = th.ones_like(gt)
+
+        t, _ = self.schedule_sampler.sample(gt.shape[0], dist_util.dev())
+        loss_dict, sample_wav, sample_idwt = self.diffusion.training_losses(
+            self.model,
+            x_start=gt,
+            t=t,
+            model_kwargs=cond,
+            labels=None,
+            mode=self.mode,
+        )
+
+        weights = th.ones(len(loss_dict["mse_wav"])).to(sample_idwt.device)
+        val_loss = (loss_dict["mse_wav"] * weights).mean().item()
+
+        pred_region = sample_idwt * mask
+        gt_region = gt * mask
+
+        val_psnr = psnr(pred_region, gt_region).item()
+        val_dice = dice_score(pred_region, gt_region).item()
+
+        if self.summary_writer is not None:
+            self.summary_writer.add_scalar(
+                "val/loss", val_loss, global_step=self.step + self.resume_step
+            )
+            self.summary_writer.add_scalar(
+                "val/psnr", val_psnr, global_step=self.step + self.resume_step
+            )
+            self.summary_writer.add_scalar(
+                "val/dice", val_dice, global_step=self.step + self.resume_step
+            )
+
+            mid = pred_region.shape[-1] // 2
+            gt_slice = visualize(gt_region[0, 0, :, :, mid])
+            pred_slice = visualize(pred_region[0, 0, :, :, mid])
+            viz = th.cat([gt_slice, pred_slice], dim=-1)
+            self.summary_writer.add_image(
+                "val/inpaint_vs_gt",
+                viz.unsqueeze(0),
+                global_step=self.step + self.resume_step,
+            )
+
+        self.model.train()
 
     def forward_backward(self, batch, cond, label=None):
         for p in self.model.parameters():  # Zero out gradient
