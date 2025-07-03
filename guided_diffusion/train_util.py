@@ -156,6 +156,7 @@ class TrainLoop:
 
     def run_loop(self):
         import time
+        print("Entering training loop...", flush=True)
         t = time.time()
         while not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps:
             t_total = time.time() - t
@@ -181,6 +182,10 @@ class TrainLoop:
             lossmse, sample, sample_idwt = self.run_step(batch, cond)
 
             t_fwd = time.time()-t_fwd
+            print(
+                f"step {self.step} | load {t_load:.3f}s | forward {t_fwd:.3f}s | loss {lossmse.item():.6f}",
+                flush=True,
+            )
 
             names = ["LLL", "LLH", "LHL", "LHH", "HLL", "HLH", "HHL", "HHH"]
 
