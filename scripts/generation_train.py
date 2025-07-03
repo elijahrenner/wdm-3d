@@ -62,6 +62,7 @@ def main():
                           normalize=(lambda x: 2*x - 1) if args.renormalize else None,
                           mode='train',
                           img_size=args.image_size)
+        val_loader = None
 
     elif args.dataset == 'lidc-idri':
         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
@@ -72,6 +73,7 @@ def main():
             mode='train',
             img_size=args.image_size,
         )
+        val_loader = None
 
     elif args.dataset == 'inpaint':
         ds = InpaintVolumes(
@@ -80,9 +82,21 @@ def main():
             img_size=args.image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
         )
-
+        val_ds = InpaintVolumes(
+            args.data_dir,
+            subset='val',
+            img_size=args.image_size,
+            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
+        )
+        val_loader = th.utils.data.DataLoader(
+            val_ds,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=False,
+        )
     else:
         print("We currently just support the datasets: brats, lidc-idri, inpaint")
+        val_loader = None
 
     datal = th.utils.data.DataLoader(ds,
                                      batch_size=args.batch_size,
@@ -113,6 +127,8 @@ def main():
         dataset=args.dataset,
         summary_writer=summary_writer,
         mode='inpaint' if args.dataset == 'inpaint' else 'default',
+        val_data=val_loader,
+        val_interval=args.val_interval,
     ).run_loop()
 
 
@@ -149,6 +165,7 @@ def create_argparser():
         renormalize=True,
         additive_skips=False,
         use_freq=False,
+        val_interval=1000,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
