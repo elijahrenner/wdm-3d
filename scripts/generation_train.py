@@ -57,6 +57,7 @@ def main():
     model.to(dist_util.dev([0, 1]) if len(args.devices) > 1 else dist_util.dev())  # allow for 2 devices
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion,  maxt=1000)
 
+    dataset_size = args.dataset_image_size or args.image_size
     if args.dataset == 'brats':
         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
         ds = BRATSVolumes(
@@ -64,7 +65,7 @@ def main():
             test_flag=False,
             normalize=(lambda x: 2*x - 1) if args.renormalize else None,
             mode='train',
-            img_size=args.image_size,
+            img_size=dataset_size,
             cache=args.cache_dataset,
         )
         val_loader = None
@@ -76,7 +77,7 @@ def main():
             test_flag=False,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             mode='train',
-            img_size=args.image_size,
+            img_size=dataset_size,
         )
         val_loader = None
 
@@ -84,7 +85,7 @@ def main():
         ds = InpaintVolumes(
             args.data_dir,
             subset='train',
-            img_size=args.image_size,
+            img_size=dataset_size,
             desired_image_size=args.desired_image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             cache=args.cache_dataset,
@@ -92,7 +93,7 @@ def main():
         val_ds = InpaintVolumes(
             args.data_dir,
             subset='val',
-            img_size=args.image_size,
+            img_size=dataset_size,
             desired_image_size=args.desired_image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             cache=args.cache_dataset,
@@ -183,6 +184,7 @@ def create_argparser():
         run_tests=True,
         cache_dataset=True,
         desired_image_size=None,
+        dataset_image_size=None,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
