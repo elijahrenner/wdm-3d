@@ -163,14 +163,14 @@ def create_argparser():
         mode='default',
         renormalize=False,
         image_size=256,
-        desired_image_size=None,
-        dataset_image_size=None,
         half_res_crop=False,
         concat_coords=False, # if true, add 3 (for 3d) or 2 (for 2d) to in_channels
     )
     defaults.update({k:v for k, v in model_and_diffusion_defaults().items() if k not in defaults})
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    parser.add_argument("--desired_image_size", type=int, default=None)
+    parser.add_argument("--dataset_image_size", type=int, default=None)
     return parser
 
 
