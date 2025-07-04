@@ -20,6 +20,10 @@ class InpaintVolumes(Dataset):
     img_size : int, optional
         Final side length of the returned volumes. Loaded data is padded to the
         largest dimension and downsampled to ``img_size`` if necessary.
+    desired_image_size : int, optional
+        Volumes are padded to this side length before downsampling. If ``None``,
+        ``img_size`` or the largest volume dimension is used. Must be divisible
+        by ``img_size``.
     modalities : tuple, optional
         MRI modalities to load.
     normalize : callable, optional
@@ -33,6 +37,7 @@ class InpaintVolumes(Dataset):
         root_dir: str,
         subset: str = "train",
         img_size: int = 256,
+        desired_image_size: int | None = None,
         modalities: tuple = ("T1w",),
         normalize=None,
         cache: bool = False,
@@ -41,6 +46,11 @@ class InpaintVolumes(Dataset):
         self.root_dir = os.path.expanduser(root_dir)
         self.subset = subset
         self.img_size = img_size
+        self.desired_image_size = desired_image_size
+        if self.desired_image_size is not None:
+            assert (
+                self.desired_image_size % self.img_size == 0
+            ), "img_size must divide desired_image_size"
         self.modalities = modalities
         self.normalize = normalize or (lambda x: x)
         self.cases = self._index_cases()
@@ -125,10 +135,14 @@ class InpaintVolumes(Dataset):
         mask_arr = nib.load(rec["mask"]).get_fdata().astype(np.uint8)
         M = torch.tensor(mask_arr, dtype=torch.float32).unsqueeze(0)
         M = (M > 0).to(Y.dtype)
-
-        target_size = max(max(Y.shape[-3:]), self.img_size)
-        if target_size % self.img_size != 0:
-            target_size = ((target_size + self.img_size - 1) // self.img_size) * self.img_size
+       
+        target_size = max(
+            max(Y.shape[-3:]),
+            self.desired_image_size if self.desired_image_size is not None else self.img_size,
+        )
+        assert (
+            target_size % self.img_size == 0
+        ), "img_size must divide the padded size"
 
         Y = self._pad_to_cube(Y, target_size, fill=0.0)
         M = self._pad_to_cube(M, target_size, fill=0.0)

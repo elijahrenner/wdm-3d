@@ -85,6 +85,7 @@ def main():
             args.data_dir,
             subset='train',
             img_size=args.image_size,
+            desired_image_size=args.desired_image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             cache=args.cache_dataset,
         )
@@ -92,6 +93,7 @@ def main():
             args.data_dir,
             subset='val',
             img_size=args.image_size,
+            desired_image_size=args.desired_image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             cache=args.cache_dataset,
         )
@@ -180,6 +182,7 @@ def create_argparser():
         val_interval=1000,
         run_tests=True,
         cache_dataset=True,
+        desired_image_size=None,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
