@@ -138,24 +138,17 @@ class InpaintVolumes(Dataset):
         M = torch.tensor(mask_arr, dtype=torch.float32).unsqueeze(0)
         M = (M > 0).to(Y.dtype)
        
-        target_size = max(
-            max(Y.shape[-3:]),
-            self.desired_image_size if self.desired_image_size is not None else self.img_size,
-        )
-        assert (
-            target_size % self.img_size == 0
-        ), "img_size must divide the padded size"
-
         target_size = max(max(Y.shape[-3:]), self.img_size)
-        if target_size % self.desired_image_size != 0:
-            target_size = (
-                (target_size + self.desired_image_size - 1)
-                // self.desired_image_size
-            ) * self.desired_image_size
+        if self.desired_image_size is not None:
+            if target_size % self.desired_image_size != 0:
+                target_size = (
+                    (target_size + self.desired_image_size - 1)
+                    // self.desired_image_size
+                ) * self.desired_image_size
 
         Y = self._pad_to_cube(Y, target_size, fill=0.0)
         M = self._pad_to_cube(M, target_size, fill=0.0)
-        if target_size != self.desired_image_size:
+        if self.desired_image_size is not None and target_size != self.desired_image_size:
             factor = target_size // self.desired_image_size
             pool = nn.AvgPool3d(factor, factor)
             Y = pool(Y)
