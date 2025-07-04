@@ -7,6 +7,7 @@ DATASET='inpaint';        # brats, lidc-idri or inpaint
 IN_CHANNELS=8;
 MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
 MODALITIES=1
+DROPOUT=0.0;              # dropout probability for the U-Net
 
 # settings for sampling/inference
 ITERATIONS=0;             # training iteration (as a multiple of 1k) checkpoint to use for sampling
@@ -102,6 +103,7 @@ COMMON="
 --renormalize=True
 --additive_skips=${ADDITIVE_SKIP}
 --use_freq=${USE_FREQ}
+--dropout=${DROPOUT}
 --val_interval=1000
 --predict_xstart=True
 "
