@@ -18,9 +18,7 @@ class InpaintVolumes(Dataset):
     subset : str, optional
         ``'train'`` or ``'val'`` subset.
     img_size : int, optional
-        Minimum cube side length volumes are padded to. If ``desired_image_size``
-        is smaller than this value, the padded volumes are downsampled to
-        ``desired_image_size``.
+        Minimum cube side length volumes are padded to. If ``desired_image_size`` is smaller than this value, the padded volumes are downsampled to ``desired_image_size``.
     desired_image_size : int, optional
         Final side length of the returned volumes. If ``None`` it defaults to
         ``img_size``. The padded size is rounded up to a multiple of this value

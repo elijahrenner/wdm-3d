@@ -181,7 +181,7 @@ def create_argparser():
         additive_skips=False,
         use_freq=False,
         val_interval=1000,
-        run_tests=True,
+        run_tests=False,
         cache_dataset=True,
     )
     defaults.update(model_and_diffusion_defaults())
