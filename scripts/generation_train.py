@@ -183,12 +183,12 @@ def create_argparser():
         val_interval=1000,
         run_tests=True,
         cache_dataset=True,
-        desired_image_size=None,
-        dataset_image_size=None,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    parser.add_argument("--desired_image_size", type=int, default=None)
+    parser.add_argument("--dataset_image_size", type=int, default=None)
     return parser
 
 
