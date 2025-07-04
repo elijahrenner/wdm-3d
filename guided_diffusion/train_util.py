@@ -7,7 +7,7 @@ import torch as th
 import torch.distributed as dist
 import torch.utils.tensorboard
 from torch.optim import AdamW
-import torch.cuda.amp as amp
+import torch.amp as amp
 
 import itertools
 
@@ -96,9 +96,9 @@ class TrainLoop:
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
         if self.use_fp16:
-            self.grad_scaler = amp.GradScaler()
+            self.grad_scaler = amp.GradScaler('cuda')
         else:
-            self.grad_scaler = amp.GradScaler(enabled=False)
+            self.grad_scaler = amp.GradScaler('cuda',enabled=False)
 
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
@@ -328,6 +328,7 @@ class TrainLoop:
                 viz.unsqueeze(0),
                 global_step=self.step + self.resume_step,
             )
+        print(f"val_loss {val_loss:.6f} | PSNR {val_psnr:.3f} | Dice {val_dice:.3f}", flush=True,)
 
         self.model.train()
 

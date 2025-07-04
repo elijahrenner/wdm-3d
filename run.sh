@@ -97,6 +97,7 @@ COMMON="
 --renormalize=True
 --additive_skips=${ADDITIVE_SKIP}
 --use_freq=${USE_FREQ}
+--val_interval=1000
 --predict_xstart=True
 "
 TRAIN="

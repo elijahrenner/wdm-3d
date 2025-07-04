@@ -59,10 +59,14 @@ def main():
 
     if args.dataset == 'brats':
         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
-        ds = BRATSVolumes(args.data_dir, test_flag=False,
-                          normalize=(lambda x: 2*x - 1) if args.renormalize else None,
-                          mode='train',
-                          img_size=args.image_size)
+        ds = BRATSVolumes(
+            args.data_dir,
+            test_flag=False,
+            normalize=(lambda x: 2*x - 1) if args.renormalize else None,
+            mode='train',
+            img_size=args.image_size,
+            cache=args.cache_dataset,
+        )
         val_loader = None
 
     elif args.dataset == 'lidc-idri':
@@ -82,12 +86,14 @@ def main():
             subset='train',
             img_size=args.image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
+            cache=args.cache_dataset,
         )
         val_ds = InpaintVolumes(
             args.data_dir,
             subset='val',
             img_size=args.image_size,
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
+            cache=args.cache_dataset,
         )
         val_loader = th.utils.data.DataLoader(
             val_ds,
@@ -149,7 +155,7 @@ def create_argparser():
         batch_size=1,
         microbatch=-1,
         ema_rate="0.9999",
-        log_interval=100,
+        log_interval=500,
         save_interval=5000,
         resume_checkpoint='',
         resume_step=0,
@@ -173,6 +179,7 @@ def create_argparser():
         use_freq=False,
         val_interval=1000,
         run_tests=False,
+        cache_dataset=True,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

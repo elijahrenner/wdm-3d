@@ -1,0 +1,12 @@
+Logging to runs/Jul03_23-55-18_cb946c53f008
+Creating model and diffusion...
+Start training...
+-------------------------
+| mse_wav    | 12.6     |
+| mse_wav_q0 | 9.05     |
+| mse_wav_q1 | 9.94     |
+| mse_wav_q2 | 25.3     |
+| mse_wav_q3 | 6.94     |
+| samples    | 5.01e+03 |
+| step       | 500      |
+-------------------------

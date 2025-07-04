@@ -18,6 +18,7 @@ class InpaintVolumes(Dataset):
         img_size: int = 256,
         modalities: tuple = ("T1w",),
         normalize=None,
+        cache: bool = False,
     ):
         super().__init__()
         self.root_dir = os.path.expanduser(root_dir)
@@ -26,6 +27,10 @@ class InpaintVolumes(Dataset):
         self.modalities = modalities
         self.normalize = normalize or (lambda x: x)
         self.cases = self._index_cases()
+        self.cache = None
+
+        if cache:
+            self.cache = [self._load_item(idx) for idx in range(len(self.cases))]
 
     # ------------------------------------------------------------
     def _index_cases(self):
@@ -83,7 +88,7 @@ class InpaintVolumes(Dataset):
         return nn.functional.pad(vol, pad, value=fill)
 
     # ------------------------------------------------------------
-    def __getitem__(self, idx):
+    def _load_item(self, idx):
         rec = self.cases[idx]
         name = rec["name"]
 
@@ -112,7 +117,14 @@ class InpaintVolumes(Dataset):
             M = pool(M)
 
         Y_void = Y * (1 - M)
+        Y = self.normalize(Y)
         return Y, M, Y_void, name, affine
+
+    # ------------------------------------------------------------
+    def __getitem__(self, idx):
+        if self.cache is not None:
+            return self.cache[idx]
+        return self._load_item(idx)
 
     # ------------------------------------------------------------
     def __len__(self):
