@@ -26,6 +26,12 @@ def run_pretrain_checks(args, dataloader, model, diffusion, schedule_sampler):
     model.train()
 
     cond = {}
+    if args.dataset == "inpaint":
+        cond = {"mask": sample[1].to(dist_util.dev())}
+        batch = sample[0].to(dist_util.dev())
+    else:
+        batch = sample.to(dist_util.dev())
+
     def to_cpu(obj):
         if th.is_tensor(obj):
             return obj.cpu()
