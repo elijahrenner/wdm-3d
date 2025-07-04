@@ -18,12 +18,13 @@ class InpaintVolumes(Dataset):
     subset : str, optional
         ``'train'`` or ``'val'`` subset.
     img_size : int, optional
-        Final side length of the returned volumes. Loaded data is padded to the
-        largest dimension and downsampled to ``img_size`` if necessary.
+        Minimum cube side length volumes are padded to. If ``desired_image_size``
+        is smaller than this value, the padded volumes are downsampled to
+        ``desired_image_size``.
     desired_image_size : int, optional
-        Volumes are padded to this side length before downsampling. If ``None``,
-        ``img_size`` or the largest volume dimension is used. Must be divisible
-        by ``img_size``.
+        Final side length of the returned volumes. If ``None`` it defaults to
+        ``img_size``. The padded size is rounded up to a multiple of this value
+        before the optional downsampling step.
     modalities : tuple, optional
         MRI modalities to load.
     normalize : callable, optional
@@ -46,11 +47,12 @@ class InpaintVolumes(Dataset):
         self.root_dir = os.path.expanduser(root_dir)
         self.subset = subset
         self.img_size = img_size
-        self.desired_image_size = desired_image_size
-        if self.desired_image_size is not None:
-            assert (
-                self.desired_image_size % self.img_size == 0
-            ), "img_size must divide desired_image_size"
+        self.desired_image_size = desired_image_size or img_size
+        if self.desired_image_size != self.img_size:
+            if self.img_size % self.desired_image_size != 0:
+                raise ValueError(
+                    "desired_image_size must divide img_size"
+                )
         self.modalities = modalities
         self.normalize = normalize or (lambda x: x)
         self.cases = self._index_cases()
@@ -144,10 +146,17 @@ class InpaintVolumes(Dataset):
             target_size % self.img_size == 0
         ), "img_size must divide the padded size"
 
+        target_size = max(max(Y.shape[-3:]), self.img_size)
+        if target_size % self.desired_image_size != 0:
+            target_size = (
+                (target_size + self.desired_image_size - 1)
+                // self.desired_image_size
+            ) * self.desired_image_size
+
         Y = self._pad_to_cube(Y, target_size, fill=0.0)
         M = self._pad_to_cube(M, target_size, fill=0.0)
-        if target_size != self.img_size:
-            factor = target_size // self.img_size
+        if target_size != self.desired_image_size:
+            factor = target_size // self.desired_image_size
             pool = nn.AvgPool3d(factor, factor)
             Y = pool(Y)
             M = pool(M)

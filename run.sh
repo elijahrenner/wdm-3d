@@ -46,11 +46,8 @@ else
   echo "MODEL TYPE NOT FOUND -> Check the supported configurations again";
 fi
 
-# ensure volumes are padded to a size divisible by the image size
-DESIRED_IMAGE_SIZE=$IMAGE_SIZE
-if [[ $IMAGE_SIZE -eq 128 ]]; then
-  DESIRED_IMAGE_SIZE=256
-fi
+# final side length after downsampling; override to change
+DESIRED_IMAGE_SIZE=${DESIRED_IMAGE_SIZE:-$IMAGE_SIZE}
 
 # some information and overwriting batch size for sampling
 # (overwrite in case you want to sample with a higher batch size)
