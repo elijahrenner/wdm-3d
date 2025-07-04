@@ -20,12 +20,26 @@ def run_pretrain_checks(args, dataloader, model, diffusion, schedule_sampler):
         example = sample[0]
     else:
         example = sample
+
+    dataset_img_size = getattr(dataloader.dataset, "img_size", args.image_size)
+    expected_shape = (dataset_img_size, dataset_img_size, dataset_img_size)
+    actual_shape = tuple(example.shape[-3:])
+    if actual_shape != expected_shape:
+        logger.log(
+            f"Warning: example volume shape {actual_shape} does not match dataset image_size {expected_shape}"
+        )
     th.save(example.cpu(), os.path.join(logdir, "example_input.pt"))
 
     model.to(dist_util.dev([0, 1]) if len(args.devices) > 1 else dist_util.dev())
     model.train()
 
     cond = {}
+    if args.dataset == "inpaint":
+        cond = {"mask": sample[1].to(dist_util.dev())}
+        batch = sample[0].to(dist_util.dev())
+    else:
+        batch = sample.to(dist_util.dev())
+
     def to_cpu(obj):
         if th.is_tensor(obj):
             return obj.cpu()
@@ -34,8 +48,6 @@ def run_pretrain_checks(args, dataloader, model, diffusion, schedule_sampler):
         if isinstance(obj, dict):
             return {k: to_cpu(v) for k, v in obj.items()}
         return obj
-
-    th.save(to_cpu(sample), os.path.join(logdir, "example_input.pt"))
 
     t, _ = schedule_sampler.sample(1, dist_util.dev())
     losses, _, _ = diffusion.training_losses(
