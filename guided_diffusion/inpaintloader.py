@@ -127,10 +127,12 @@ class InpaintVolumes(Dataset):
         M = (M > 0).to(Y.dtype)
 
         target_size = max(max(Y.shape[-3:]), self.img_size)
+        if target_size % self.img_size != 0:
+            target_size = ((target_size + self.img_size - 1) // self.img_size) * self.img_size
+
         Y = self._pad_to_cube(Y, target_size, fill=0.0)
         M = self._pad_to_cube(M, target_size, fill=0.0)
         if target_size != self.img_size:
-            assert target_size % self.img_size == 0, "img_size must divide the padded size"
             factor = target_size // self.img_size
             pool = nn.AvgPool3d(factor, factor)
             Y = pool(Y)
