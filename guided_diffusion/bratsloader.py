@@ -8,7 +8,7 @@ import nibabel
 
 
 class BRATSVolumes(torch.utils.data.Dataset):
-    def __init__(self, directory, test_flag=False, normalize=None, mode='train', img_size=256):
+    def __init__(self, directory, test_flag=False, normalize=None, mode='train', img_size=256, cache=False):
         """BraTS dataset loader.
 
         Parameters
@@ -38,8 +38,9 @@ class BRATSVolumes(torch.utils.data.Dataset):
             self.seqtypes = ['t1n', 't1c', 't2w', 't2f', 'seg']
         self.seqtypes_set = set(self.seqtypes)
         self.database = []
+        self.cache = None
 
-        if not self.mode == 'fake': # Used during training and for evaluating real data
+        if not self.mode == 'fake':  # Used during training and for evaluating real data
             for root, dirs, files in os.walk(self.directory):
                 # if there are no subdirs, we have a datadir
                 if not dirs:
@@ -57,14 +58,17 @@ class BRATSVolumes(torch.utils.data.Dataset):
                     datapoint['t1n'] = os.path.join(root, f)
                     self.database.append(datapoint)
 
-    def __getitem__(self, x):
+        if cache:
+            self.cache = [self._load_item(i) for i in range(len(self.database))]
+
+    def _load_item(self, x):
         filedict = self.database[x]
         name = filedict['t1n']
         nib_img = nibabel.load(name)  # We only use t1 weighted images
         out = nib_img.get_fdata()
 
         if not self.mode == 'fake':
-            # CLip and normalize the images
+            # Clip and normalize the images
             out_clipped = np.clip(out, np.quantile(out, 0.001), np.quantile(out, 0.999))
             out_normalized = (out_clipped - np.min(out_clipped)) / (np.max(out_clipped) - np.min(out_clipped))
             out = torch.tensor(out_normalized, dtype=torch.float32)
@@ -90,6 +94,11 @@ class BRATSVolumes(torch.utils.data.Dataset):
             return image, name
         else:
             return image
+
+    def __getitem__(self, x):
+        if self.cache is not None:
+            return self.cache[x]
+        return self._load_item(x)
 
     def __len__(self):
         return len(self.database)
