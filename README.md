@@ -89,6 +89,14 @@ We provide a script for preprocessing LIDC-IDRI. Simply run the following comman
 python utils/preproc_lidc-idri.py --dicom_dir DICOM_PATH --nifti_dir NIFTI_PATH
 ```
 
+### Image Size
+The `img_size` parameter of our dataset loaders defines the cubic size of the
+volumes returned to the model. When the raw data is larger, it is first padded
+or cropped to a cube and then downsampled to match `img_size`. For example,
+datasets stored at 256³ will be downsampled to 128³ when using
+`img_size=128`. Likewise, if your images are 128³ and you request
+`img_size=64`, the loader will return 64³ volumes.
+
 ## Evaluation
 As our code for evaluating the model performance has slightly different dependencies, we provide a second .yml file to set up the evaluation environment.
 Simply use the following command to create and activate the new environment:
