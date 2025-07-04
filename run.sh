@@ -46,6 +46,9 @@ else
   echo "MODEL TYPE NOT FOUND -> Check the supported configurations again";
 fi
 
+# final side length after downsampling; override to change
+DESIRED_IMAGE_SIZE=${DESIRED_IMAGE_SIZE:-$IMAGE_SIZE}
+
 # some information and overwriting batch size for sampling
 # (overwrite in case you want to sample with a higher batch size)
 # no need to change for reproducing
@@ -105,6 +108,7 @@ TRAIN="
 --resume_checkpoint=
 --resume_step=0
 --image_size=${IMAGE_SIZE}
+--desired_image_size=${DESIRED_IMAGE_SIZE}
 --use_fp16=False
 --lr=1e-5
 --save_interval=100000
@@ -116,6 +120,7 @@ SAMPLE="
 --data_mode=${DATA_MODE}
 --seed=${SEED}
 --image_size=${IMAGE_SIZE}
+--desired_image_size=${DESIRED_IMAGE_SIZE}
 --use_fp16=False
 --model_path=./${RUN_DIR}/checkpoints/${DATASET}_${ITERATIONS}000.pt
 --devices=${GPU}
