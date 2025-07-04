@@ -188,9 +188,11 @@ class TrainLoop:
         sample_out = (sample_idwt + 1) / 2.0
         out_dir = os.path.join(logger.get_dir(), "samples")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, "init_sample.nii.gz")
-        nib.save(nib.Nifti1Image(sample_out[0, 0].cpu().numpy(), np.eye(4)), out_path)
-        print(f"Saved initial sample to {out_path}")
+        nii_path = os.path.join(out_dir, "init_sample.nii.gz")
+        pt_path = os.path.join(out_dir, "init_sample.pt")
+        nib.save(nib.Nifti1Image(sample_out[0, 0].cpu().numpy(), np.eye(4)), nii_path)
+        th.save(sample_out.cpu(), pt_path)
+        print(f"Saved initial sample to {nii_path} and {pt_path}")
 
     def run_loop(self):
         import time
@@ -236,15 +238,21 @@ class TrainLoop:
 
             if self.step % 200 == 0:
                 image_size = sample_idwt.size()[2]
-                midplane = sample_idwt[0, 0, :, :, image_size // 2]
-                self.summary_writer.add_image('sample/x_0', midplane.unsqueeze(0),
-                                              global_step=self.step + self.resume_step)
+                midplane = sample_idwt[0, 0, :, :, image_size // 2].detach().cpu()
+                midplane = visualize(midplane)
+                self.summary_writer.add_image(
+                    'sample/x_0', midplane.unsqueeze(0),
+                    global_step=self.step + self.resume_step
+                )
 
                 image_size = sample.size()[2]
                 for ch in range(8):
-                    midplane = sample[0, ch, :, :, image_size // 2]
-                    self.summary_writer.add_image('sample/{}'.format(names[ch]), midplane.unsqueeze(0),
-                                                  global_step=self.step + self.resume_step)
+                    midplane = sample[0, ch, :, :, image_size // 2].detach().cpu()
+                    midplane = visualize(midplane)
+                    self.summary_writer.add_image(
+                        f'sample/{names[ch]}', midplane.unsqueeze(0),
+                        global_step=self.step + self.resume_step
+                    )
 
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()

@@ -43,12 +43,12 @@ class LIDCVolumes(torch.utils.data.Dataset):
         filedict = self.database[x]
         name = filedict['image']
         nib_img = nibabel.load(name)
-        out = nib_img.get_fdata()
+        out = nib_img.get_fdata().astype(np.float32)
 
         if not self.mode == 'fake':
-            out = torch.Tensor(out)
+            out = torch.tensor(out, dtype=torch.float32)
 
-            image = torch.zeros(1, 256, 256, 256)
+            image = torch.zeros(1, 256, 256, 256, dtype=torch.float32)
             image[:, :, :, :] = out
 
             if self.img_size == 128:
