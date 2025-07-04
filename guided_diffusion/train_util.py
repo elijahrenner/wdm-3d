@@ -1,6 +1,8 @@
 import copy
 import functools
 import os
+import nibabel as nib
+import numpy as np
 
 import blobfile as bf
 import torch as th
@@ -158,8 +160,41 @@ class TrainLoop:
         else:
             print('no optimizer checkpoint exists')
 
+    
+    def _save_initial_sample(self):
+        """Save an initial output sample before training starts."""
+        if dist.get_rank() != 0:
+            return
+
+        sample = next(iter(self.datal))
+        if self.dataset == 'inpaint':
+            batch = sample[0].to(dist_util.dev())
+            cond = {"mask": sample[1].to(dist_util.dev())}
+        else:
+            batch = sample.to(dist_util.dev())
+            cond = {}
+
+        t = th.zeros(batch.shape[0], dtype=th.long, device=dist_util.dev())
+        with th.no_grad():
+            _, _, sample_idwt = self.diffusion.training_losses(
+                self.model,
+                x_start=batch,
+                t=t,
+                model_kwargs=cond,
+                labels=None,
+                mode=self.mode,
+            )
+
+        sample_out = (sample_idwt + 1) / 2.0
+        out_dir = os.path.join(logger.get_dir(), "samples")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "init_sample.nii.gz")
+        nib.save(nib.Nifti1Image(sample_out[0, 0].cpu().numpy(), np.eye(4)), out_path)
+        print(f"Saved initial sample to {out_path}")
+
     def run_loop(self):
         import time
+        self._save_initial_sample()
         print("Entering training loop...", flush=True)
         t = time.time()
         while not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps:

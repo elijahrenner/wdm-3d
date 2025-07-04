@@ -26,11 +26,16 @@ def run_pretrain_checks(args, dataloader, model, diffusion, schedule_sampler):
     model.train()
 
     cond = {}
-    if args.dataset == "inpaint":
-        cond = {"mask": sample[1].to(dist_util.dev())}
-        batch = sample[0].to(dist_util.dev())
-    else:
-        batch = sample.to(dist_util.dev())
+    def to_cpu(obj):
+        if th.is_tensor(obj):
+            return obj.cpu()
+        if isinstance(obj, (list, tuple)):
+            return [to_cpu(o) for o in obj]
+        if isinstance(obj, dict):
+            return {k: to_cpu(v) for k, v in obj.items()}
+        return obj
+
+    th.save(to_cpu(sample), os.path.join(logdir, "example_input.pt"))
 
     t, _ = schedule_sampler.sample(1, dist_util.dev())
     losses, _, _ = diffusion.training_losses(
