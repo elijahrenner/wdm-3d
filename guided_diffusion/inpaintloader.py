@@ -9,7 +9,24 @@ from torch.utils.data import Dataset
 
 
 class InpaintVolumes(Dataset):
-    """Dataset returning MRI volumes and inpainting masks."""
+    """Dataset returning MRI volumes and inpainting masks.
+
+    Parameters
+    ----------
+    root_dir : str
+        Base directory of the dataset.
+    subset : str, optional
+        ``'train'`` or ``'val'`` subset.
+    img_size : int, optional
+        Final side length of the returned volumes. Loaded data is padded to the
+        largest dimension and downsampled to ``img_size`` if necessary.
+    modalities : tuple, optional
+        MRI modalities to load.
+    normalize : callable, optional
+        Preprocessing function applied to the returned volume.
+    cache : bool, optional
+        If ``True`` all data is preloaded into memory.
+    """
 
     def __init__(
         self,
@@ -69,13 +86,13 @@ class InpaintVolumes(Dataset):
         return cases
 
     # ------------------------------------------------------------
-    def _pad_to_cube(self, vol, fill=0.0):
-        """Symmetric 3-D pad to [img_size^3]."""
+    def _pad_to_cube(self, vol, size, fill=0.0):
+        """Symmetric 3-D pad to ``size`` cubed."""
         D, H, W = vol.shape[-3:]
         pad_D, pad_H, pad_W = (
-            self.img_size - D,
-            self.img_size - H,
-            self.img_size - W,
+            size - D,
+            size - H,
+            size - W,
         )
         pad = (
             pad_W // 2,
@@ -109,10 +126,13 @@ class InpaintVolumes(Dataset):
         M = torch.tensor(mask_arr, dtype=torch.float32).unsqueeze(0)
         M = (M > 0).to(Y.dtype)
 
-        Y = self._pad_to_cube(Y, fill=0.0)
-        M = self._pad_to_cube(M, fill=0.0)
-        if self.img_size == 128:
-            pool = nn.AvgPool3d(2, 2)
+        target_size = max(max(Y.shape[-3:]), self.img_size)
+        Y = self._pad_to_cube(Y, target_size, fill=0.0)
+        M = self._pad_to_cube(M, target_size, fill=0.0)
+        if target_size != self.img_size:
+            assert target_size % self.img_size == 0, "img_size must divide the padded size"
+            factor = target_size // self.img_size
+            pool = nn.AvgPool3d(factor, factor)
             Y = pool(Y)
             M = pool(M)
 

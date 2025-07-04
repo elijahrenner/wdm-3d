@@ -8,11 +8,22 @@ import nibabel
 
 class LIDCVolumes(torch.utils.data.Dataset):
     def __init__(self, directory, test_flag=False, normalize=None, mode='train', img_size=256):
-        '''
-        directory is expected to contain some folder structure:
-                  if some subfolder contains only files, all of these
-                  files are assumed to have the name: processed.nii.gz
-        '''
+        """LIDC-IDRI dataset loader.
+
+        Parameters
+        ----------
+        directory : str
+            Path to the dataset root directory.
+        test_flag : bool, optional
+            If ``True`` only image volumes are returned.
+        normalize : callable, optional
+            Optional preprocessing function applied to the returned volume.
+        mode : str, optional
+            ``'train'`` or ``'fake'``.
+        img_size : int, optional
+            Side length of the returned cubic volume. Images are padded to a
+            256³ cube and downsampled if ``img_size`` is smaller than 256.
+        """
         super().__init__()
         self.mode = mode
         self.directory = os.path.expanduser(directory)
@@ -51,8 +62,10 @@ class LIDCVolumes(torch.utils.data.Dataset):
             image = torch.zeros(1, 256, 256, 256, dtype=torch.float32)
             image[:, :, :, :] = out
 
-            if self.img_size == 128:
-                downsample = nn.AvgPool3d(kernel_size=2, stride=2)
+            if self.img_size != 256:
+                assert 256 % self.img_size == 0, "img_size must divide 256"
+                factor = 256 // self.img_size
+                downsample = nn.AvgPool3d(kernel_size=factor, stride=factor)
                 image = downsample(image)
         else:
             image = torch.tensor(out, dtype=torch.float32)
