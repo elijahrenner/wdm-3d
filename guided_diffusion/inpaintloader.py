@@ -156,6 +156,8 @@ class InpaintVolumes(Dataset):
 
         Y_void = Y * (1 - M)
         Y = self.normalize(Y)
+
+        # print(Y.shape)
         return Y, M, Y_void, name, affine
 
     # ------------------------------------------------------------

@@ -5,7 +5,7 @@ CHANNELS=64;              # number of model base channels (we use 64 for all exp
 MODE='train';             # train vs sample
 DATASET='inpaint';        # brats, lidc-idri or inpaint
 IN_CHANNELS=8;
-MODEL='ours_wnet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
+MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
 MODALITIES=1
 
 # settings for sampling/inference
@@ -47,9 +47,9 @@ else
 fi
 
 # dataset volume size; override to change
-DATASET_IMAGE_SIZE=${DATASET_IMAGE_SIZE:-$IMAGE_SIZE}
+DATASET_IMAGE_SIZE=256
 # final side length after downsampling; override to change
-DESIRED_IMAGE_SIZE=${DESIRED_IMAGE_SIZE:-$IMAGE_SIZE}
+DESIRED_IMAGE_SIZE=128
 
 # some information and overwriting batch size for sampling
 # (overwrite in case you want to sample with a higher batch size)
