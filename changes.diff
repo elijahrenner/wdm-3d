@@ -1,0 +1,881 @@
+diff --git a/guided_diffusion/gaussian_diffusion.py b/guided_diffusion/gaussian_diffusion.py
+index 73ade10..fdca1ab 100644
+--- a/guided_diffusion/gaussian_diffusion.py
++++ b/guided_diffusion/gaussian_diffusion.py
+@@ -654,11 +654,14 @@ class GaussianDiffusion:
+         if device is None:
+             device = next(model.parameters()).device
+         assert isinstance(shape, (tuple, list))
++        use_inpaint = model_kwargs is not None and 'context' in model_kwargs and 'mask' in model_kwargs
+         if noise is not None:
+             img = noise
+         else:
+             img = th.randn(*shape, device=device)
+-      
++        if use_inpaint:
++            img = model_kwargs['context'] + img * model_kwargs['mask']
++
+         indices = list(range(time))[::-1]
+         if progress:
+             # Lazy import so that we don't depend on tqdm.
+@@ -668,17 +671,25 @@ class GaussianDiffusion:
+         for i in indices:
+             t = th.tensor([i] * shape[0], device=device)
+             with th.no_grad():
++                cur = img
++                if use_inpaint:
++                    cur = model_kwargs['context'] + img * model_kwargs['mask']
++                    model_input = th.cat([cur, model_kwargs['mask']], dim=1)
++                else:
++                    model_input = cur
+                 out = self.p_sample(
+                     model,
+-                    img,
++                    model_input,
+                     t,
+                     clip_denoised=clip_denoised,
+                     denoised_fn=denoised_fn,
+                     cond_fn=cond_fn,
+-                    model_kwargs=model_kwargs,
++                    model_kwargs=None,
+                 )
+-                yield out
+                 img = out["sample"]
++                if use_inpaint:
++                    img = model_kwargs['context'] + img * model_kwargs['mask']
++                yield {"sample": img}
+ 
+     def ddim_sample(
+             self,
+@@ -1066,15 +1077,36 @@ class GaussianDiffusion:
+         x_start_dwt = th.cat([LLL / 3., LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)
+ 
+         if mode == 'default':
+-            noise = th.randn_like(x_start)  # Sample noise - original image resolution.
++            noise = th.randn_like(x_start)
+             LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH = dwt(noise)
+-            noise_dwt = th.cat([LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)  # Wavelet transformed noise
+-            x_t = self.q_sample(x_start_dwt, t, noise=noise_dwt)  # Sample x_t
++            noise_dwt = th.cat([LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH], dim=1)
++            x_t = self.q_sample(x_start_dwt, t, noise=noise_dwt)
++
++        elif mode == 'inpaint':
++            mask = model_kwargs.get('mask')
++            if mask is None:
++                raise ValueError('mask must be provided for inpaint mode')
++            # remove mask so it is not forwarded to the model
++            model_kwargs = {k: v for k, v in model_kwargs.items() if k != 'mask'}
+ 
++            LLLm, LLHm, LHLm, LHHm, HLLm, HLHm, HHLm, HHHm = dwt(mask)
++            mask_dwt = th.cat([LLLm, LLHm, LHLm, LHHm, HLLm, HLHm, HHLm, HHHm], dim=1)
++            mask_rep = mask_dwt.repeat(1, x_start.shape[1], 1, 1, 1)
++
++            noise = th.randn_like(x_start)
++            LLLn, LLHn, LHLn, LHHn, HLLn, HLHn, HHLn, HHHn = dwt(noise)
++            noise_dwt = th.cat([LLLn, LLHn, LHLn, LHHn, HLLn, HLHn, HHLn, HHHn], dim=1)
++            x_t_noisy = self.q_sample(x_start_dwt, t, noise=noise_dwt)
++            x_ctx = x_start_dwt * (1 - mask_rep)
++            x_t = x_ctx + x_t_noisy * mask_rep
+         else:
+-            raise ValueError(f'Invalid mode {mode=}, needs to be "default"')
++            raise ValueError(f'Invalid mode {mode=}, needs to be "default" or "inpaint"')
+ 
+-        model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)  # Model outputs denoised wavelet subbands
++        if mode == 'inpaint':
++            model_in = th.cat([x_t, mask_rep], dim=1)
++        else:
++            model_in = x_t
++        model_output = model(model_in, self._scale_timesteps(t), **model_kwargs)  # Model outputs denoised wavelet subbands
+ 
+         # Inverse wavelet transform the model output
+         B, _, H, W, D = model_output.size()
+@@ -1087,7 +1119,19 @@ class GaussianDiffusion:
+                                  model_output[:, 6, :, :, :].view(B, 1, H, W, D),
+                                  model_output[:, 7, :, :, :].view(B, 1, H, W, D))
+ 
+-        terms = {"mse_wav": th.mean(mean_flat((x_start_dwt - model_output) ** 2), dim=0)}
++        if mode == 'inpaint':
++            diff = (x_start_dwt - model_output) * mask_rep
++            mse = mean_flat(diff ** 2) / (mean_flat(mask_rep) + 1e-8)
++            terms = {"mse_wav": th.mean(mse, dim=0)}
++        else:
++            terms = {
++                "mse_wav": th.mean(
++                    mean_flat((x_start_dwt - model_output) ** 2), dim=0
++                )
++            }
++
++        # Numerical errors could yield tiny negative values.
++        terms["mse_wav"] = th.clamp(terms["mse_wav"], min=0)
+ 
+         return terms, model_output, model_output_idwt
+ 
+diff --git a/guided_diffusion/inpaintloader.py b/guided_diffusion/inpaintloader.py
+new file mode 100644
+index 0000000..5b85309
+--- /dev/null
++++ b/guided_diffusion/inpaintloader.py
+@@ -0,0 +1,131 @@
++import os
++import re
++import pandas as pd
++import nibabel as nib
++import numpy as np
++import torch
++import torch.nn as nn
++from torch.utils.data import Dataset
++
++
++class InpaintVolumes(Dataset):
++    """Dataset returning MRI volumes and inpainting masks."""
++
++    def __init__(
++        self,
++        root_dir: str,
++        subset: str = "train",
++        img_size: int = 256,
++        modalities: tuple = ("T1w",),
++        normalize=None,
++        cache: bool = False,
++    ):
++        super().__init__()
++        self.root_dir = os.path.expanduser(root_dir)
++        self.subset = subset
++        self.img_size = img_size
++        self.modalities = modalities
++        self.normalize = normalize or (lambda x: x)
++        self.cases = self._index_cases()
++        self.cache = None
++
++        if cache:
++            self.cache = [self._load_item(idx) for idx in range(len(self.cases))]
++
++    # ------------------------------------------------------------
++    def _index_cases(self):
++        """Collect file paths for all cases."""
++        df = pd.read_csv(f"{self.root_dir}/participants.tsv", sep="\t")
++
++        # assign train/val split for FCD subjects
++        fcd_df = df[df["group"] == "fcd"].copy()
++        fcd_df = fcd_df.sample(frac=1, random_state=42).reset_index(drop=True)
++        n_train = int(len(fcd_df) * 0.9)
++        fcd_df.loc[: n_train - 1, "split"] = "train"
++        fcd_df.loc[n_train:, "split"] = "val"
++        df.loc[fcd_df.index, "split"] = fcd_df["split"]
++
++        cases = []
++        for pid in df[(df["split"] == self.subset) & (df["group"] == "fcd")][
++            "participant_id"
++        ]:
++            case_dir = os.path.join(self.root_dir, pid, "anat")
++            files = os.listdir(case_dir)
++            img_dict = {}
++            for mod in self.modalities:
++                pattern = re.compile(rf"^{re.escape(pid)}.*{re.escape(mod)}\.nii\.gz$")
++                matches = [f for f in files if pattern.match(f)]
++                if not matches:
++                    raise FileNotFoundError(f"Missing {mod} for {pid} in {case_dir}")
++                img_dict[mod] = os.path.join(case_dir, matches[0])
++
++            mask_matches = [
++                f for f in files if re.match(rf"^{re.escape(pid)}.*roi\.nii\.gz$", f)
++            ]
++            if not mask_matches:
++                raise FileNotFoundError(f"Missing mask for {pid} in {case_dir}")
++            mask_path = os.path.join(case_dir, mask_matches[0])
++            cases.append({"img": img_dict, "mask": mask_path, "name": pid})
++        return cases
++
++    # ------------------------------------------------------------
++    def _pad_to_cube(self, vol, fill=0.0):
++        """Symmetric 3-D pad to [img_size^3]."""
++        D, H, W = vol.shape[-3:]
++        pad_D, pad_H, pad_W = (
++            self.img_size - D,
++            self.img_size - H,
++            self.img_size - W,
++        )
++        pad = (
++            pad_W // 2,
++            pad_W - pad_W // 2,
++            pad_H // 2,
++            pad_H - pad_H // 2,
++            pad_D // 2,
++            pad_D - pad_D // 2,
++        )
++        return nn.functional.pad(vol, pad, value=fill)
++
++    # ------------------------------------------------------------
++    def _load_item(self, idx):
++        rec = self.cases[idx]
++        name = rec["name"]
++
++        vols = []
++        for mod in self.modalities:
++            arr = (
++                nib.load(rec["img"][mod]).get_fdata().astype(np.float32)
++            )
++            lo, hi = np.quantile(arr, [0.001, 0.999])
++            arr = np.clip(arr, lo, hi)
++            arr = (arr - lo) / (hi - lo + 1e-6)
++            vols.append(torch.from_numpy(arr))
++        first_mod = self.modalities[0]
++        affine = nib.load(rec["img"][first_mod]).affine
++        Y = torch.stack(vols, dim=0)
++
++        mask_arr = nib.load(rec["mask"]).get_fdata().astype(np.uint8)
++        M = torch.from_numpy(mask_arr).unsqueeze(0)
++        M = (M > 0).to(Y.dtype)
++
++        Y = self._pad_to_cube(Y, fill=0.0)
++        M = self._pad_to_cube(M, fill=0.0)
++        if self.img_size == 128:
++            pool = nn.AvgPool3d(2, 2)
++            Y = pool(Y)
++            M = pool(M)
++
++        Y_void = Y * (1 - M)
++        Y = self.normalize(Y)
++        return Y, M, Y_void, name, affine
++
++    # ------------------------------------------------------------
++    def __getitem__(self, idx):
++        if self.cache is not None:
++            return self.cache[idx]
++        return self._load_item(idx)
++
++    # ------------------------------------------------------------
++    def __len__(self):
++        return len(self.cases)
+diff --git a/guided_diffusion/pretrain_checks.py b/guided_diffusion/pretrain_checks.py
+new file mode 100644
+index 0000000..d1a916a
+--- /dev/null
++++ b/guided_diffusion/pretrain_checks.py
+@@ -0,0 +1,56 @@
++import os
++import json
++import torch as th
++
++from . import dist_util, logger
++
++
++def run_pretrain_checks(args, dataloader, model, diffusion, schedule_sampler):
++    """Run a set of quick checks before starting training."""
++    logdir = logger.get_dir() or os.getcwd()
++    os.makedirs(logdir, exist_ok=True)
++
++    # Save hyperparameters
++    with open(os.path.join(logdir, "hyperparameters.json"), "w") as f:
++        json.dump(vars(args), f, indent=2)
++
++    # Fetch one batch from dataloader and save example inputs
++    sample = next(iter(dataloader))
++    if args.dataset == "inpaint":
++        example = sample[0]
++    else:
++        example = sample
++    th.save(example.cpu(), os.path.join(logdir, "example_input.pt"))
++
++    model.to(dist_util.dev([0, 1]) if len(args.devices) > 1 else dist_util.dev())
++    model.train()
++
++    cond = {}
++    if args.dataset == "inpaint":
++        cond = {"mask": sample[1].to(dist_util.dev())}
++        batch = sample[0].to(dist_util.dev())
++    else:
++        batch = sample.to(dist_util.dev())
++
++    t, _ = schedule_sampler.sample(1, dist_util.dev())
++    losses, _, _ = diffusion.training_losses(
++        model,
++        x_start=batch[:1],
++        t=t,
++        model_kwargs=cond,
++        labels=None,
++        mode="inpaint" if args.dataset == "inpaint" else "default",
++    )
++
++    loss = losses["mse_wav"].mean()
++    if not th.isfinite(loss):
++        raise RuntimeError("Non-finite loss encountered during checks")
++
++    loss.backward()
++    for p in model.parameters():
++        if p.grad is None:
++            continue
++        if not th.isfinite(p.grad).all():
++            raise RuntimeError("Non-finite gradient encountered during checks")
++
++    logger.log("Pre-training checks passed.")
+diff --git a/guided_diffusion/train_util.py b/guided_diffusion/train_util.py
+index df2a0fd..7689a96 100644
+--- a/guided_diffusion/train_util.py
++++ b/guided_diffusion/train_util.py
+@@ -7,7 +7,7 @@ import torch as th
+ import torch.distributed as dist
+ import torch.utils.tensorboard
+ from torch.optim import AdamW
+-import torch.cuda.amp as amp
++import torch.amp as amp
+ 
+ import itertools
+ 
+@@ -15,12 +15,31 @@ from . import dist_util, logger
+ from .resample import LossAwareSampler, UniformSampler
+ from DWT_IDWT.DWT_IDWT_layer import DWT_3D, IDWT_3D
+ 
++
++def psnr(pred: th.Tensor, target: th.Tensor, data_range: float = 2.0) -> th.Tensor:
++    """Compute the peak signal to noise ratio."""
++    mse = th.mean((pred - target) ** 2)
++    mse = th.clamp(mse, min=1e-8)
++    return 20 * th.log10(th.tensor(data_range, device=pred.device)) - 10 * th.log10(mse)
++
++
++def dice_score(pred: th.Tensor, target: th.Tensor, threshold: float = 0.0) -> th.Tensor:
++    """Dice score for binary volumes."""
++    pred_bin = (pred > threshold).float()
++    target_bin = (target > threshold).float()
++    inter = (pred_bin * target_bin).sum()
++    return 2 * inter / (pred_bin.sum() + target_bin.sum() + 1e-8)
++
+ INITIAL_LOG_LOSS_SCALE = 20.0
+ 
+-def visualize(img):
++def visualize(img: th.Tensor) -> th.Tensor:
++    """Normalize a tensor image to the range [0, 1]."""
+     _min = img.min()
+     _max = img.max()
+-    normalized_img = (img - _min)/ (_max - _min)
++    if _max == _min:
++        # avoid division by zero which leads to NaNs in TensorBoard
++        return th.zeros_like(img)
++    normalized_img = (img - _min) / (_max - _min)
+     return normalized_img
+ 
+ class TrainLoop:
+@@ -46,6 +65,8 @@ class TrainLoop:
+         weight_decay=0.0,
+         lr_anneal_steps=0,
+         dataset='brats',
++        val_data=None,
++        val_interval=0,
+         summary_writer=None,
+         mode='default',
+         loss_level='image',
+@@ -57,6 +78,9 @@ class TrainLoop:
+         self.datal = data
+         self.dataset = dataset
+         self.iterdatal = iter(data)
++        self.val_data = val_data
++        self.iterval = iter(val_data) if val_data is not None else None
++        self.val_interval = val_interval
+         self.batch_size = batch_size
+         self.in_channels = in_channels
+         self.image_size = image_size
+@@ -72,9 +96,9 @@ class TrainLoop:
+         self.resume_checkpoint = resume_checkpoint
+         self.use_fp16 = use_fp16
+         if self.use_fp16:
+-            self.grad_scaler = amp.GradScaler()
++            self.grad_scaler = amp.GradScaler('cuda')
+         else:
+-            self.grad_scaler = amp.GradScaler(enabled=False)
++            self.grad_scaler = amp.GradScaler('cuda',enabled=False)
+ 
+         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+         self.weight_decay = weight_decay
+@@ -136,11 +160,12 @@ class TrainLoop:
+ 
+     def run_loop(self):
+         import time
++        print("Entering training loop...", flush=True)
+         t = time.time()
+         while not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps:
+             t_total = time.time() - t
+             t = time.time()
+-            if self.dataset in ['brats', 'lidc-idri']:
++            if self.dataset in ['brats', 'lidc-idri', 'inpaint']:
+                 try:
+                     batch = next(self.iterdatal)
+                     cond = {}
+@@ -149,7 +174,11 @@ class TrainLoop:
+                     batch = next(self.iterdatal)
+                     cond = {}
+ 
+-            batch = batch.to(dist_util.dev())
++            if self.dataset == 'inpaint':
++                # Inpainting loader returns tuple
++                batch = tuple(b.to(dist_util.dev()) if th.is_tensor(b) else b for b in batch)
++            else:
++                batch = batch.to(dist_util.dev())
+ 
+             t_fwd = time.time()
+             t_load = t_fwd-t
+@@ -157,6 +186,10 @@ class TrainLoop:
+             lossmse, sample, sample_idwt = self.run_step(batch, cond)
+ 
+             t_fwd = time.time()-t_fwd
++            print(
++                f"step {self.step} | load {t_load:.3f}s | forward {t_fwd:.3f}s | loss {lossmse.item():.6f}",
++                flush=True,
++            )
+ 
+             names = ["LLL", "LLH", "LHL", "LHH", "HLL", "HLH", "HHL", "HHH"]
+ 
+@@ -186,6 +219,13 @@ class TrainLoop:
+                 # Run for a finite amount of time in integration tests.
+                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
+                     return
++
++            if (
++                self.val_data is not None
++                and self.val_interval > 0
++                and self.step % self.val_interval == 0
++            ):
++                self._run_validation()
+             self.step += 1
+ 
+         # Save the last checkpoint if it wasn't already saved.
+@@ -224,21 +264,98 @@ class TrainLoop:
+         self.log_step()
+         return lossmse, sample, sample_idwt
+ 
++    @th.no_grad()
++    def _run_validation(self):
++        """Run a single validation pass."""
++        if self.val_data is None:
++            return
++
++        self.model.eval()
++        try:
++            batch = next(self.iterval)
++        except StopIteration:
++            self.iterval = iter(self.val_data)
++            batch = next(self.iterval)
++
++        if self.dataset == 'inpaint':
++            batch = tuple(b.to(dist_util.dev()) if th.is_tensor(b) else b for b in batch)
++            cond = {"mask": batch[1]}
++            gt = batch[0]
++            mask = batch[1]
++        else:
++            batch = batch.to(dist_util.dev())
++            cond = {}
++            gt = batch
++            mask = th.ones_like(gt)
++
++        t, _ = self.schedule_sampler.sample(gt.shape[0], dist_util.dev())
++        loss_dict, sample_wav, sample_idwt = self.diffusion.training_losses(
++            self.model,
++            x_start=gt,
++            t=t,
++            model_kwargs=cond,
++            labels=None,
++            mode=self.mode,
++        )
++
++        weights = th.ones(len(loss_dict["mse_wav"])).to(sample_idwt.device)
++        val_loss = (loss_dict["mse_wav"] * weights).mean()
++        val_loss = th.clamp(val_loss, min=0).item()
++
++        pred_region = sample_idwt * mask
++        gt_region = gt * mask
++
++        val_psnr = psnr(pred_region, gt_region).item()
++        val_dice = dice_score(pred_region, gt_region).item()
++
++        if self.summary_writer is not None:
++            self.summary_writer.add_scalar(
++                "val/loss", val_loss, global_step=self.step + self.resume_step
++            )
++            self.summary_writer.add_scalar(
++                "val/psnr", val_psnr, global_step=self.step + self.resume_step
++            )
++            self.summary_writer.add_scalar(
++                "val/dice", val_dice, global_step=self.step + self.resume_step
++            )
++
++            mid = pred_region.shape[-1] // 2
++            gt_slice = visualize(gt_region[0, 0, :, :, mid])
++            pred_slice = visualize(pred_region[0, 0, :, :, mid])
++            viz = th.cat([gt_slice, pred_slice], dim=-1)
++            self.summary_writer.add_image(
++                "val/inpaint_vs_gt",
++                viz.unsqueeze(0),
++                global_step=self.step + self.resume_step,
++            )
++        print(f"val_loss {val_loss:.6f} | PSNR {val_psnr:.3f} | Dice {val_dice:.3f}", flush=True,)
++
++        self.model.train()
++
+     def forward_backward(self, batch, cond, label=None):
+         for p in self.model.parameters():  # Zero out gradient
+             p.grad = None
+ 
+-        for i in range(0, batch.shape[0], self.microbatch):
+-            micro = batch[i: i + self.microbatch].to(dist_util.dev())
++        for i in range(0, batch[0].shape[0] if self.dataset == 'inpaint' else batch.shape[0], self.microbatch):
++            if self.dataset == 'inpaint':
++                micro = batch[0][i: i + self.microbatch]
++                micro_mask = batch[1][i: i + self.microbatch]
++                micro_cond = {"mask": micro_mask}
++            else:
++                micro = batch[i: i + self.microbatch]
++                micro_cond = None
++            micro = micro.to(dist_util.dev())
++            if self.dataset == 'inpaint':
++                micro_cond = {k: v.to(dist_util.dev()) for k, v in micro_cond.items()}
+ 
+             if label is not None:
+                 micro_label = label[i: i + self.microbatch].to(dist_util.dev())
+             else:
+                 micro_label = None
+ 
+-            micro_cond = None
+-
+-            last_batch = (i + self.microbatch) >= batch.shape[0]
++            last_batch = (
++                i + self.microbatch
++            ) >= (batch[0].shape[0] if self.dataset == 'inpaint' else batch.shape[0])
+             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+ 
+             compute_losses = functools.partial(self.diffusion.training_losses,
+@@ -280,7 +397,10 @@ class TrainLoop:
+ 
+             weights = th.ones(len(losses["mse_wav"])).cuda()  # Equally weight all wavelet channel losses
+ 
++            # Clamp per-channel losses to avoid negative values from numeric errors
++            losses["mse_wav"] = th.clamp(losses["mse_wav"], min=0)
+             loss = (losses["mse_wav"] * weights).mean()
++            loss = th.clamp(loss, min=0)
+             lossmse = loss.detach()
+ 
+             log_loss_dict(self.diffusion, t, {k: v * weights for k, v in losses.items()})
+@@ -315,6 +435,8 @@ class TrainLoop:
+                     filename = f"brats_{(self.step+self.resume_step):06d}.pt"
+                 elif self.dataset == 'lidc-idri':
+                     filename = f"lidc-idri_{(self.step+self.resume_step):06d}.pt"
++                elif self.dataset == 'inpaint':
++                    filename = f"inpaint_{(self.step+self.resume_step):06d}.pt"
+                 else:
+                     raise ValueError(f'dataset {self.dataset} not implemented')
+ 
+diff --git a/run.sh b/run.sh
+index dbd098a..d0ac5f6 100755
+--- a/run.sh
++++ b/run.sh
+@@ -3,8 +3,10 @@ GPU=0;                    # gpu to use
+ SEED=42;                  # randomness seed for sampling
+ CHANNELS=64;              # number of model base channels (we use 64 for all experiments)
+ MODE='train';             # train vs sample
+-DATASET='brats';          # brats or lidc-idri
+-MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
++DATASET='inpaint';        # brats, lidc-idri or inpaint
++IN_CHANNELS=8;
++MODEL='ours_wnet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
++MODALITIES=1
+ 
+ # settings for sampling/inference
+ ITERATIONS=0;             # training iteration (as a multiple of 1k) checkpoint to use for sampling
+@@ -59,6 +61,13 @@ elif [[ $MODE == 'train' ]]; then
+     echo "MODE: training";
+     echo "Dataset: LIDC-IDRI";
+     DATA_DIR=~/wdm-3d/data/LIDC-IDRI/;
++    IN_CHANNELS=8;
++  elif [[ $DATASET == 'inpaint' ]]; then
++    echo "MODE: training";
++    echo "DATASET: INPAINT";
++    DATA_DIR=/workspace/sts/data;
++    IN_CHANNELS=$(( MODALITIES * 8 + 8 ));
++    OUT_CHANNELS=8;
+   else
+     echo "DATASET NOT FOUND -> Check the supported datasets again";
+   fi
+@@ -81,13 +90,14 @@ COMMON="
+ --dims=3
+ --batch_size=${BATCH_SIZE}
+ --num_groups=32
+---in_channels=8
+---out_channels=8
++--in_channels=${IN_CHANNELS}
++--out_channels=${OUT_CHANNELS:-$IN_CHANNELS}
+ --bottleneck_attention=False
+ --resample_2d=False
+ --renormalize=True
+ --additive_skips=${ADDITIVE_SKIP}
+ --use_freq=${USE_FREQ}
++--val_interval=1000
+ --predict_xstart=True
+ "
+ TRAIN="
+@@ -98,7 +108,7 @@ TRAIN="
+ --use_fp16=False
+ --lr=1e-5
+ --save_interval=100000
+---num_workers=24
++--num_workers=12
+ --devices=${GPU}
+ "
+ SAMPLE="
+diff --git a/runs/Jul03_23-55-18_cb946c53f008/events.out.tfevents.1751586918.cb946c53f008.647.0 b/runs/Jul03_23-55-18_cb946c53f008/events.out.tfevents.1751586918.cb946c53f008.647.0
+new file mode 100644
+index 0000000..4f4112f
+Binary files /dev/null and b/runs/Jul03_23-55-18_cb946c53f008/events.out.tfevents.1751586918.cb946c53f008.647.0 differ
+diff --git a/runs/Jul03_23-55-18_cb946c53f008/log.txt b/runs/Jul03_23-55-18_cb946c53f008/log.txt
+new file mode 100644
+index 0000000..297b638
+--- /dev/null
++++ b/runs/Jul03_23-55-18_cb946c53f008/log.txt
+@@ -0,0 +1,12 @@
++Logging to runs/Jul03_23-55-18_cb946c53f008
++Creating model and diffusion...
++Start training...
++-------------------------
++| mse_wav    | 12.6     |
++| mse_wav_q0 | 9.05     |
++| mse_wav_q1 | 9.94     |
++| mse_wav_q2 | 25.3     |
++| mse_wav_q3 | 6.94     |
++| samples    | 5.01e+03 |
++| step       | 500      |
++-------------------------
+diff --git a/runs/Jul03_23-55-18_cb946c53f008/progress.csv b/runs/Jul03_23-55-18_cb946c53f008/progress.csv
+new file mode 100644
+index 0000000..e65771b
+--- /dev/null
++++ b/runs/Jul03_23-55-18_cb946c53f008/progress.csv
+@@ -0,0 +1,2 @@
++mse_wav,mse_wav_q0,mse_wav_q1,mse_wav_q2,mse_wav_q3,samples,step
++12.596854065456377,9.054972957300732,9.937614593972388,25.303724508740988,6.935347168311579,5010,500
+diff --git a/scripts/generation_sample.py b/scripts/generation_sample.py
+index dd2cd51..45636f3 100644
+--- a/scripts/generation_sample.py
++++ b/scripts/generation_sample.py
+@@ -20,7 +20,8 @@ from guided_diffusion.script_util import (model_and_diffusion_defaults,
+                                           add_dict_to_argparser,
+                                           args_to_dict,
+                                           )
+-from DWT_IDWT.DWT_IDWT_layer import IDWT_3D
++from guided_diffusion.inpaintloader import InpaintVolumes
++from DWT_IDWT.DWT_IDWT_layer import IDWT_3D, DWT_3D
+ 
+ 
+ def visualize(img):
+@@ -54,6 +55,14 @@ def main():
+ 
+     model.eval()
+     idwt = IDWT_3D("haar")
++    dwt = DWT_3D("haar")
++
++    if args.dataset == 'inpaint':
++        ds = InpaintVolumes(args.data_dir, subset='val', img_size=args.image_size)
++        loader = th.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False)
++        data_iter = iter(loader)
++    else:
++        loader = None
+ 
+     for ind in range(args.num_samples // args.batch_size):
+         th.manual_seed(seed)
+@@ -63,23 +72,43 @@ def main():
+ 
+         seed += 1
+ 
+-        img = th.randn(args.batch_size,         # Batch size
+-                       8,                       # 8 wavelet coefficients
+-                       args.image_size//2,      # Half spatial resolution (D)
+-                       args.image_size//2,      # Half spatial resolution (H)
+-                       args.image_size//2,      # Half spatial resolution (W)
+-                       ).to(dist_util.dev())
+-
+-        model_kwargs = {}
+-
+-        sample_fn = diffusion.p_sample_loop
+-
+-        sample = sample_fn(model=model,
+-                           shape=img.shape,
+-                           noise=img,
+-                           clip_denoised=args.clip_denoised,
+-                           model_kwargs=model_kwargs,
+-                           )
++        if args.dataset == 'inpaint':
++            try:
++                Y, M, Y_void, name, affine = next(data_iter)
++            except StopIteration:
++                data_iter = iter(loader)
++                Y, M, Y_void, name, affine = next(data_iter)
++            Y = Y.to(dist_util.dev())
++            M = M.to(dist_util.dev())
++            Y_void = Y_void.to(dist_util.dev())
++            # Wavelet domain context and mask
++            ctx = th.cat(dwt(Y_void), dim=1)
++            mask_dwt = th.cat(dwt(M), dim=1)
++            mask_rep = mask_dwt.repeat(1, Y.shape[1], 1, 1, 1)
++            noise = th.randn_like(ctx)
++            sample = diffusion.p_sample_loop(
++                model,
++                shape=ctx.shape,
++                noise=noise,
++                clip_denoised=args.clip_denoised,
++                model_kwargs={'context': ctx, 'mask': mask_rep},
++            )
++        else:
++            img = th.randn(
++                args.batch_size,
++                8,
++                args.image_size // 2,
++                args.image_size // 2,
++                args.image_size // 2,
++                device=dist_util.dev(),
++            )
++            sample = diffusion.p_sample_loop(
++                model=model,
++                shape=img.shape,
++                noise=img,
++                clip_denoised=args.clip_denoised,
++                model_kwargs={},
++            )
+ 
+         B, _, D, H, W = sample.size()
+ 
+@@ -100,8 +129,13 @@ def main():
+ 
+         pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+         for i in range(sample.shape[0]):
+-            output_name = os.path.join(args.output_dir, f'sample_{ind}_{i}.nii.gz')
+-            img = nib.Nifti1Image(sample.detach().cpu().numpy()[i, :, :, :], np.eye(4))
++            if args.dataset == 'inpaint':
++                output_name = os.path.join(args.output_dir, f"{name[i]}_inpaint.nii.gz")
++                aff = affine[i] if isinstance(affine[i], np.ndarray) else affine[i].numpy()
++            else:
++                output_name = os.path.join(args.output_dir, f'sample_{ind}_{i}.nii.gz')
++                aff = np.eye(4)
++            img = nib.Nifti1Image(sample.detach().cpu().numpy()[i, :, :, :], aff)
+             nib.save(img=img, filename=output_name)
+             print(f'Saved to {output_name}')
+ 
+diff --git a/scripts/generation_train.py b/scripts/generation_train.py
+index 039e260..464d515 100644
+--- a/scripts/generation_train.py
++++ b/scripts/generation_train.py
+@@ -15,12 +15,14 @@ from guided_diffusion import (dist_util,
+                               logger)
+ from guided_diffusion.bratsloader import BRATSVolumes
+ from guided_diffusion.lidcloader import LIDCVolumes
++from guided_diffusion.inpaintloader import InpaintVolumes
+ from guided_diffusion.resample import create_named_schedule_sampler
+ from guided_diffusion.script_util import (model_and_diffusion_defaults,
+                                           create_model_and_diffusion,
+                                           args_to_dict,
+                                           add_dict_to_argparser)
+ from guided_diffusion.train_util import TrainLoop
++from guided_diffusion.pretrain_checks import run_pretrain_checks
+ from torch.utils.tensorboard import SummaryWriter
+ 
+ 
+@@ -57,20 +59,51 @@ def main():
+ 
+     if args.dataset == 'brats':
+         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
+-        ds = BRATSVolumes(args.data_dir, test_flag=False,
+-                          normalize=(lambda x: 2*x - 1) if args.renormalize else None,
+-                          mode='train',
+-                          img_size=args.image_size)
++        ds = BRATSVolumes(
++            args.data_dir,
++            test_flag=False,
++            normalize=(lambda x: 2*x - 1) if args.renormalize else None,
++            mode='train',
++            img_size=args.image_size,
++            cache=args.cache_dataset,
++        )
++        val_loader = None
+ 
+     elif args.dataset == 'lidc-idri':
+         assert args.image_size in [128, 256], "We currently just support image sizes: 128, 256"
+-        ds = LIDCVolumes(args.data_dir, test_flag=False,
+-                         normalize=(lambda x: 2*x - 1) if args.renormalize else None,
+-                         mode='train',
+-                         img_size=args.image_size)
+-
++        ds = LIDCVolumes(
++            args.data_dir,
++            test_flag=False,
++            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
++            mode='train',
++            img_size=args.image_size,
++        )
++        val_loader = None
++
++    elif args.dataset == 'inpaint':
++        ds = InpaintVolumes(
++            args.data_dir,
++            subset='train',
++            img_size=args.image_size,
++            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
++            cache=args.cache_dataset,
++        )
++        val_ds = InpaintVolumes(
++            args.data_dir,
++            subset='val',
++            img_size=args.image_size,
++            normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
++            cache=args.cache_dataset,
++        )
++        val_loader = th.utils.data.DataLoader(
++            val_ds,
++            batch_size=args.batch_size,
++            num_workers=args.num_workers,
++            shuffle=False,
++        )
+     else:
+-        print("We currently just support the datasets: brats, lidc-idri")
++        print("We currently just support the datasets: brats, lidc-idri, inpaint")
++        val_loader = None
+ 
+     datal = th.utils.data.DataLoader(ds,
+                                      batch_size=args.batch_size,
+@@ -78,6 +111,11 @@ def main():
+                                      shuffle=True,
+                                      )
+ 
++    if args.run_tests:
++        logger.log("Running pre-training checks...")
++        run_pretrain_checks(args, datal, model, diffusion, schedule_sampler)
++        return
++
+     logger.log("Start training...")
+     TrainLoop(
+         model=model,
+@@ -100,7 +138,9 @@ def main():
+         lr_anneal_steps=args.lr_anneal_steps,
+         dataset=args.dataset,
+         summary_writer=summary_writer,
+-        mode='default',
++        mode='inpaint' if args.dataset == 'inpaint' else 'default',
++        val_data=val_loader,
++        val_interval=args.val_interval,
+     ).run_loop()
+ 
+ 
+@@ -115,7 +155,7 @@ def create_argparser():
+         batch_size=1,
+         microbatch=-1,
+         ema_rate="0.9999",
+-        log_interval=100,
++        log_interval=500,
+         save_interval=5000,
+         resume_checkpoint='',
+         resume_step=0,
+@@ -137,6 +177,9 @@ def create_argparser():
+         renormalize=True,
+         additive_skips=False,
+         use_freq=False,
++        val_interval=1000,
++        run_tests=False,
++        cache_dataset=True,
+     )
+     defaults.update(model_and_diffusion_defaults())
+     parser = argparse.ArgumentParser()
