@@ -7,7 +7,7 @@ import nibabel
 
 
 class LIDCVolumes(torch.utils.data.Dataset):
-    def __init__(self, directory, test_flag=False, normalize=None, mode='train', img_size=256):
+    def __init__(self, directory, test_flag=False, normalize=None, mode='train', img_size=256, cache=False):
         """LIDC-IDRI dataset loader.
 
         Parameters
@@ -31,6 +31,7 @@ class LIDCVolumes(torch.utils.data.Dataset):
         self.test_flag = test_flag
         self.img_size = img_size
         self.database = []
+        self.cache = None
 
         if not self.mode == 'fake':
             for root, dirs, files in os.walk(self.directory):
@@ -50,7 +51,10 @@ class LIDCVolumes(torch.utils.data.Dataset):
                     datapoint['image'] = os.path.join(root, f)
                     self.database.append(datapoint)
 
-    def __getitem__(self, x):
+        if cache:
+            self.cache = [self._load_item(i) for i in range(len(self.database))]
+
+    def _load_item(self, x):
         filedict = self.database[x]
         name = filedict['image']
         nib_img = nibabel.load(name)
@@ -78,6 +82,11 @@ class LIDCVolumes(torch.utils.data.Dataset):
             return image, name
         else:
             return image
+
+    def __getitem__(self, x):
+        if self.cache is not None:
+            return self.cache[x]
+        return self._load_item(x)
 
     def __len__(self):
         return len(self.database)

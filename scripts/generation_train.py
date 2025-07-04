@@ -78,6 +78,7 @@ def main():
             normalize=(lambda x: 2 * x - 1) if args.renormalize else None,
             mode='train',
             img_size=dataset_size,
+            cache=args.cache_dataset,
         )
         val_loader = None
 
