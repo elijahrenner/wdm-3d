@@ -58,7 +58,12 @@ def main():
     dwt = DWT_3D("haar")
 
     if args.dataset == 'inpaint':
-        ds = InpaintVolumes(args.data_dir, subset='val', img_size=args.image_size)
+        ds = InpaintVolumes(
+            args.data_dir,
+            subset='val',
+            img_size=args.image_size,
+            desired_image_size=args.desired_image_size,
+        )
         loader = th.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False)
         data_iter = iter(loader)
     else:
@@ -157,6 +162,7 @@ def create_argparser():
         mode='default',
         renormalize=False,
         image_size=256,
+        desired_image_size=None,
         half_res_crop=False,
         concat_coords=False, # if true, add 3 (for 3d) or 2 (for 2d) to in_channels
     )
