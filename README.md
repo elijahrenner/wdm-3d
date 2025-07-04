@@ -47,6 +47,8 @@ MODEL: `'ours_unet_128'`, `'ours_unet_256'`, `'ours_wnet_128'`, `'ours_wnet_256'
 
 DATASET: `'brats'`, `'lidc-idri'`
 
+DROPOUT: dropout probability for the U-Net (e.g., `0.1`)
+
 ## Conditional Image Synthesis / Image-to-Image Translation 
 To use WDM for conditional image synthesis or paired image-to-image translation check out our repository [pfriedri/cwdm](https://github.com/pfriedri/cwdm) that implements our paper **cWDM: Conditional Wavelet Diffusion Models for Cross-Modality 3D Medical Image Synthesis**.
 

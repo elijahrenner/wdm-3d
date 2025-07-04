@@ -721,6 +721,7 @@ class UNetModel(nn.Module):
         self.out = nn.Sequential(
             normalization(ch, self.num_groups),
             nn.SiLU(),
+            nn.Dropout(p=dropout),
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
 
