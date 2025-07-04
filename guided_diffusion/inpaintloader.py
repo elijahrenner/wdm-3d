@@ -100,13 +100,13 @@ class InpaintVolumes(Dataset):
             lo, hi = np.quantile(arr, [0.001, 0.999])
             arr = np.clip(arr, lo, hi)
             arr = (arr - lo) / (hi - lo + 1e-6)
-            vols.append(torch.from_numpy(arr))
+            vols.append(torch.tensor(arr, dtype=torch.float32))
         first_mod = self.modalities[0]
         affine = nib.load(rec["img"][first_mod]).affine
         Y = torch.stack(vols, dim=0)
 
         mask_arr = nib.load(rec["mask"]).get_fdata().astype(np.uint8)
-        M = torch.from_numpy(mask_arr).unsqueeze(0)
+        M = torch.tensor(mask_arr, dtype=torch.float32).unsqueeze(0)
         M = (M > 0).to(Y.dtype)
 
         Y = self._pad_to_cube(Y, fill=0.0)

@@ -59,10 +59,10 @@ class BRATSVolumes(torch.utils.data.Dataset):
             # CLip and normalize the images
             out_clipped = np.clip(out, np.quantile(out, 0.001), np.quantile(out, 0.999))
             out_normalized = (out_clipped - np.min(out_clipped)) / (np.max(out_clipped) - np.min(out_clipped))
-            out = torch.tensor(out_normalized)
+            out = torch.tensor(out_normalized, dtype=torch.float32)
 
             # Zero pad images
-            image = torch.zeros(1, 256, 256, 256)
+            image = torch.zeros(1, 256, 256, 256, dtype=torch.float32)
             image[:, 8:-8, 8:-8, 50:-51] = out
 
             # Downsampling
