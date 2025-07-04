@@ -108,11 +108,13 @@ def main():
         print("We currently just support the datasets: brats, lidc-idri, inpaint")
         val_loader = None
 
-    datal = th.utils.data.DataLoader(ds,
-                                     batch_size=args.batch_size,
-                                     num_workers=args.num_workers,
-                                     shuffle=True,
-                                     )
+    datal = th.utils.data.DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=True,
+        persistent_workers=args.num_workers > 0,
+    )
 
     if args.run_tests:
         logger.log("Running pre-training checks...")

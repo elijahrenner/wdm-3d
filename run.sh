@@ -4,10 +4,9 @@ SEED=42;                  # randomness seed for sampling
 CHANNELS=64;              # number of model base channels (we use 64 for all experiments)
 MODE='train';             # train vs sample
 DATASET='inpaint';        # brats, lidc-idri or inpaint
-IN_CHANNELS=8;
 MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
 MODALITIES=1
-DROPOUT=0.0;              # dropout probability for the U-Net
+DROPOUT=0.1;              # dropout probability for the U-Net
 
 # settings for sampling/inference
 ITERATIONS=0;             # training iteration (as a multiple of 1k) checkpoint to use for sampling
