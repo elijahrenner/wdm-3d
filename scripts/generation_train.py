@@ -146,6 +146,8 @@ def main():
         mode='inpaint' if args.dataset == 'inpaint' else 'default',
         val_data=val_loader,
         val_interval=args.val_interval,
+        early_stopping=args.early_stopping,
+        patience=args.early_stopping_patience,
     ).run_loop()
 
 
@@ -185,12 +187,16 @@ def create_argparser():
         val_interval=1000,
         run_tests=False,
         cache_dataset=True,
+        early_stopping=False,
+        early_stopping_patience=10,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     parser.add_argument("--desired_image_size", type=int, default=None)
     parser.add_argument("--dataset_image_size", type=int, default=None)
+    parser.add_argument("--early_stopping", action="store_true", help="Enable early stopping")
+    parser.add_argument("--early_stopping_patience", type=int, default=10, help="Patience for early stopping")
     return parser
 
 
