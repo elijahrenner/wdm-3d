@@ -53,7 +53,9 @@ DROPOUT: dropout probability for the U-Net (e.g., `0.1`)
 Training can be stopped early based on the validation loss by enabling the
 `--early_stopping` flag in `generation_train.py`. The patience can be adjusted
 via `--early_stopping_patience`. Automatic hyperparameter optimization is
-available through the script `scripts/hyperparameter_search.py` which relies on
+available through the script `scripts/hyperparameter_search.py` (or via the
+`run_search.sh` helper) which relies on
+
 [Optuna](https://optuna.org) to minimize the validation loss.
 
 ## Conditional Image Synthesis / Image-to-Image Translation 
