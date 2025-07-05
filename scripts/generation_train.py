@@ -187,8 +187,6 @@ def create_argparser():
         val_interval=1000,
         run_tests=False,
         cache_dataset=True,
-        early_stopping=False,
-        early_stopping_patience=10,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
