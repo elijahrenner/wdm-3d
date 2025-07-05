@@ -72,6 +72,9 @@ class TrainLoop:
         summary_writer=None,
         mode='default',
         loss_level='image',
+        early_stop=False,
+        patience=10,
+        min_delta=0.0,
     ):
         self.summary_writer = summary_writer
         self.mode = mode
@@ -110,6 +113,12 @@ class TrainLoop:
         self.idwt = IDWT_3D('haar')
 
         self.loss_level = loss_level
+
+        self.early_stop = early_stop
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_val = float('inf')
+        self.no_improve = 0
 
         self.step = 1
         self.resume_step = resume_step
@@ -268,12 +277,22 @@ class TrainLoop:
                 and self.val_interval > 0
                 and self.step % self.val_interval == 0
             ):
-                self._run_validation()
+                val = self._run_validation()
+                if val is not None:
+                    if val + self.min_delta < self.best_val:
+                        self.best_val = val
+                        self.no_improve = 0
+                    else:
+                        self.no_improve += 1
+                        if self.early_stop and self.no_improve >= self.patience:
+                            print("Early stopping triggered.", flush=True)
+                            break
             self.step += 1
 
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()
+        return self.best_val
 
     def run_step(self, batch, cond, label=None, info=dict()):
         lossmse, sample, sample_idwt = self.forward_backward(batch, cond, label)
@@ -374,6 +393,7 @@ class TrainLoop:
         print(f"val_loss {val_loss:.6f} | PSNR {val_psnr:.3f} | Dice {val_dice:.3f}", flush=True,)
 
         self.model.train()
+        return val_loss
 
     def forward_backward(self, batch, cond, label=None):
         for p in self.model.parameters():  # Zero out gradient

@@ -26,8 +26,7 @@ from guided_diffusion.pretrain_checks import run_pretrain_checks
 from torch.utils.tensorboard import SummaryWriter
 
 
-def main():
-    args = create_argparser().parse_args()
+def run_training(args):
     seed = args.seed
     th.manual_seed(seed)
     np.random.seed(seed)
@@ -53,7 +52,6 @@ def main():
     arguments = args_to_dict(args, model_and_diffusion_defaults().keys())
     model, diffusion = create_model_and_diffusion(**arguments)
 
-    # logger.log("Number of trainable parameters: {}".format(np.array([np.array(p.shape).prod() for p in model.parameters()]).sum()))
     model.to(dist_util.dev([0, 1]) if len(args.devices) > 1 else dist_util.dev())  # allow for 2 devices
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion,  maxt=1000)
 
@@ -119,10 +117,10 @@ def main():
     if args.run_tests:
         logger.log("Running pre-training checks...")
         run_pretrain_checks(args, datal, model, diffusion, schedule_sampler)
-        return
+        return 0.0
 
     logger.log("Start training...")
-    TrainLoop(
+    return TrainLoop(
         model=model,
         diffusion=diffusion,
         data=datal,
@@ -146,7 +144,31 @@ def main():
         mode='inpaint' if args.dataset == 'inpaint' else 'default',
         val_data=val_loader,
         val_interval=args.val_interval,
+        early_stop=args.early_stop,
+        patience=args.patience,
+        min_delta=args.min_delta,
     ).run_loop()
+
+
+def main():
+    args = create_argparser().parse_args()
+    if args.optuna_trials > 0:
+        import optuna
+
+        def objective(trial):
+            trial_args = argparse.Namespace(**vars(args))
+            trial_args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
+            trial_args.batch_size = trial.suggest_categorical(
+                "batch_size", [1, 2, 4, 8, 16]
+            )
+            trial_args.dropout = trial.suggest_float("dropout", 0.0, 0.5)
+            return run_training(trial_args)
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=args.optuna_trials)
+        print("Best hyperparameters:", study.best_params)
+    else:
+        run_training(args)
 
 
 def create_argparser():
@@ -185,6 +207,10 @@ def create_argparser():
         val_interval=1000,
         run_tests=False,
         cache_dataset=True,
+        early_stop=False,
+        patience=10,
+        min_delta=0.0,
+        optuna_trials=0,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
