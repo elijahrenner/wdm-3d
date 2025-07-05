@@ -72,6 +72,8 @@ class TrainLoop:
         summary_writer=None,
         mode='default',
         loss_level='image',
+        early_stopping=False,
+        patience=10,
     ):
         self.summary_writer = summary_writer
         self.mode = mode
@@ -110,6 +112,10 @@ class TrainLoop:
         self.idwt = IDWT_3D('haar')
 
         self.loss_level = loss_level
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.best_val_loss = float('inf')
+        self.bad_epochs = 0
 
         self.step = 1
         self.resume_step = resume_step
@@ -268,7 +274,16 @@ class TrainLoop:
                 and self.val_interval > 0
                 and self.step % self.val_interval == 0
             ):
-                self._run_validation()
+                val_loss = self._run_validation()
+                if self.early_stopping:
+                    if val_loss < self.best_val_loss:
+                        self.best_val_loss = val_loss
+                        self.bad_epochs = 0
+                    else:
+                        self.bad_epochs += 1
+                        if self.bad_epochs >= self.patience:
+                            print(f"Early stopping at step {self.step}")
+                            break
             self.step += 1
 
         # Save the last checkpoint if it wasn't already saved.
@@ -374,6 +389,7 @@ class TrainLoop:
         print(f"val_loss {val_loss:.6f} | PSNR {val_psnr:.3f} | Dice {val_dice:.3f}", flush=True,)
 
         self.model.train()
+        return val_loss
 
     def forward_backward(self, batch, cond, label=None):
         for p in self.model.parameters():  # Zero out gradient
