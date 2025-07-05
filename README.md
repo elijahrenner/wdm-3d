@@ -49,6 +49,16 @@ DATASET: `'brats'`, `'lidc-idri'`
 
 DROPOUT: dropout probability for the U-Net (e.g., `0.1`)
 
+### Hyperparameter Tuning with Optuna
+The training script `scripts/generation_train.py` can perform a hyperparameter
+search when the flag `--optuna_trials` is set to a positive number. Optuna then
+minimizes the **validation loss**, which is computed as the mean MSE in the
+wavelet domain (`val_loss`). After all trials have finished, the script prints
+the best hyperparameters to the console and stores the entire study in a
+SQLite database. By default the file `optuna_study.db` is created in the
+current directory. You can change the location using the `--optuna_storage`
+argument.
+
 ## Conditional Image Synthesis / Image-to-Image Translation 
 To use WDM for conditional image synthesis or paired image-to-image translation check out our repository [pfriedri/cwdm](https://github.com/pfriedri/cwdm) that implements our paper **cWDM: Conditional Wavelet Diffusion Models for Cross-Modality 3D Medical Image Synthesis**.
 

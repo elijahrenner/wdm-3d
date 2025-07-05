@@ -12,7 +12,8 @@ sys.path.append(".")
 sys.path.append("..")
 
 from guided_diffusion import (dist_util,
-                              logger)
+                             logger)
+from pathlib import Path
 from guided_diffusion.bratsloader import BRATSVolumes
 from guided_diffusion.lidcloader import LIDCVolumes
 from guided_diffusion.inpaintloader import InpaintVolumes
@@ -164,9 +165,17 @@ def main():
             trial_args.dropout = trial.suggest_float("dropout", 0.0, 0.5)
             return run_training(trial_args)
 
-        study = optuna.create_study(direction="minimize")
+        db_path = Path(args.optuna_storage)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        storage = f"sqlite:///{db_path}"
+        study = optuna.create_study(
+            direction="minimize",
+            storage=storage,
+            load_if_exists=True,
+        )
         study.optimize(objective, n_trials=args.optuna_trials)
         print("Best hyperparameters:", study.best_params)
+        print(f"Study saved to {db_path}")
     else:
         run_training(args)
 
@@ -211,6 +220,7 @@ def create_argparser():
         patience=10,
         min_delta=0.0,
         optuna_trials=0,
+        optuna_storage="optuna_study.db",
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
