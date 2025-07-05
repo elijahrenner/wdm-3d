@@ -7,6 +7,10 @@ DATASET='inpaint';        # brats, lidc-idri or inpaint
 MODEL='ours_unet_128';    # 'ours_unet_256', 'ours_wnet_128', 'ours_wnet_256'
 MODALITIES=1
 DROPOUT=0.1;              # dropout probability for the U-Net
+OPTUNA_TRIALS=0;          # number of optuna trials (0 to disable search)
+EARLY_STOP=false;         # enable early stopping
+PATIENCE=10;              # early stopping patience
+MIN_DELTA=0.0;            # minimum improvement for early stopping
 
 # settings for sampling/inference
 ITERATIONS=0;             # training iteration (as a multiple of 1k) checkpoint to use for sampling
@@ -118,6 +122,10 @@ TRAIN="
 --save_interval=100000
 --num_workers=12
 --devices=${GPU}
+--optuna_trials=${OPTUNA_TRIALS}
+--early_stop=${EARLY_STOP}
+--patience=${PATIENCE}
+--min_delta=${MIN_DELTA}
 "
 SAMPLE="
 --data_dir=${DATA_DIR}
