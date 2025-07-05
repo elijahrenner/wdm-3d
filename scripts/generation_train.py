@@ -195,6 +195,8 @@ def create_argparser():
     add_dict_to_argparser(parser, defaults)
     parser.add_argument("--desired_image_size", type=int, default=None)
     parser.add_argument("--dataset_image_size", type=int, default=None)
+    parser.add_argument("--early_stopping", action="store_true", help="Enable early stopping")
+    parser.add_argument("--early_stopping_patience", type=int, default=10, help="Patience for early stopping")
     return parser
 
 
