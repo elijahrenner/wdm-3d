@@ -55,7 +55,6 @@ Training can be stopped early based on the validation loss by enabling the
 via `--early_stopping_patience`. Automatic hyperparameter optimization is
 available through the script `scripts/hyperparameter_search.py` (or via the
 `run_search.sh` helper) which relies on
-
 [Optuna](https://optuna.org) to minimize the validation loss.
 
 ## Conditional Image Synthesis / Image-to-Image Translation 
