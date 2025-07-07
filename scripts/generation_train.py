@@ -159,7 +159,7 @@ def main():
             trial_args = argparse.Namespace(**vars(args))
             trial_args.lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
             trial_args.batch_size = trial.suggest_categorical(
-                "batch_size", [1, 2, 4, 8, 16]
+                "batch_size", [1, 2, 4, 8]
             )
             trial_args.dropout = trial.suggest_float("dropout", 0.0, 0.5)
             return run_training(trial_args)
